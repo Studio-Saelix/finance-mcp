@@ -70,9 +70,12 @@ class PlaidProvider:
 
     def get_balances(self, enrollment: Enrollment) -> list[Balance]:
         """Live Plaid /accounts/balance/get for just this enrollment."""
+        access_token = self.storage.get_runtime_token(enrollment.id)
+        if not access_token:
+            return []
         client = client_mod.get_client()
         resp = client.accounts_balance_get(
-            AccountsBalanceGetRequest(access_token=enrollment.access_token)
+            AccountsBalanceGetRequest(access_token=access_token)
         )
         return [_to_balance(a) for a in resp.get("accounts", [])]
 

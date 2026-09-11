@@ -58,7 +58,6 @@ def _seed_item(
         id=item_id,
         institution_id="ins_1",
         institution_name="Test Bank",
-        access_token=f"access_{item_id}",
         provider="plaid",
     )
 
@@ -100,7 +99,6 @@ def test_list_accounts_empty_for_unknown_enrollment(tmp_db):
         id="does_not_exist",
         institution_id=None,
         institution_name=None,
-        access_token="nope",
         provider="plaid",
     )
     p = PlaidProvider(tmp_db, _config())

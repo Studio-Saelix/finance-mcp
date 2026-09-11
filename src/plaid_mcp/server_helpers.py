@@ -19,23 +19,19 @@ from .storage import Storage
 def list_enrollments(config: Config, storage: Storage) -> list[Enrollment]:
     """Return every active ``Enrollment`` for the configured provider.
 
-    Plaid: one enrollment per ``items`` row (access_token pulled from storage).
-    Access tokens are internal provider inputs and are never returned by MCP.
+    Plaid: one metadata-only enrollment per ``items`` row. Credential
+    decryption happens in provider calls, not during enumeration.
     """
     provider_name = (config.provider or "plaid").strip().lower()
     if provider_name == "plaid":
         out: list[Enrollment] = []
         items = {i["item_id"]: i for i in storage.list_items()}
         for item_id, item in items.items():
-            access_token = storage.get_access_token(item_id)
-            if not access_token:
-                continue
             out.append(
                 Enrollment(
                     id=item_id,
                     institution_id=item.get("institution_id"),
                     institution_name=item.get("institution_name"),
-                    access_token=access_token,
                     provider="plaid",
                 )
             )

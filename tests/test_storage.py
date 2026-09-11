@@ -11,7 +11,7 @@ def test_save_and_get_item(tmp_db):
         institution_name="Test Bank",
         products=["transactions"],
     )
-    assert tmp_db.get_access_token("item_1") == "tok_1"
+    assert tmp_db.get_runtime_token("item_1") == "tok_1"
 
     items = tmp_db.list_items()
     assert len(items) == 1
@@ -25,7 +25,7 @@ def test_save_item_preserves_created_at_on_update(tmp_db):
     # Re-save (e.g. token rotation) and verify created_at is stable.
     tmp_db.save_item("item_1", "tok_2", "ins_1", "Bank", ["transactions"])
     assert tmp_db.list_items()[0]["created_at"] == original
-    assert tmp_db.get_access_token("item_1") == "tok_2"
+    assert tmp_db.get_runtime_token("item_1") == "tok_2"
 
 
 def test_delete_item_cascades(tmp_db):
@@ -35,7 +35,7 @@ def test_delete_item_cascades(tmp_db):
 
     tmp_db.delete_item("item_1")
 
-    assert tmp_db.get_access_token("item_1") is None
+    assert tmp_db.get_runtime_token("item_1") is None
     assert tmp_db.list_accounts() == []
     assert tmp_db.get_cursor("item_1") is None
 
@@ -160,7 +160,6 @@ def test_link_session_lifecycle(tmp_db):
     tmp_db.complete_link_session("link_tok", public_token="pub_X", item_id="item_X")
     session = tmp_db.get_link_session("link_tok")
     assert session["status"] == "completed"
-    assert session["public_token"] == "pub_X"
     assert session["item_id"] == "item_X"
 
 

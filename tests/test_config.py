@@ -31,7 +31,8 @@ def test_host_mapping():
 
 def test_missing_credentials_raises(monkeypatch):
     monkeypatch.delenv("PLAID_CLIENT_ID")
-    with pytest.raises(RuntimeError, match="PLAID_CLIENT_ID"):
+    monkeypatch.delenv("PLAID_MCP_ALLOW_ENV_SECRETS")
+    with pytest.raises(RuntimeError, match="not initialized"):
         Config.from_env()
 
 

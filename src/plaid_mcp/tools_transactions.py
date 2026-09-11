@@ -31,19 +31,27 @@ def list_linked_institutions(storage: Storage) -> list[dict[str, Any]]:
     return items
 
 
-def remove_institution(storage: Storage, item_id: str) -> dict[str, Any]:
-    """Unlink an item from Plaid and purge its data locally."""
+def remove_institution(
+    storage: Storage, item_id: str, *, force_local_purge: bool = False
+) -> dict[str, Any]:
+    """Unlink upstream first; preserve local state when removal fails."""
     from plaid.model.item_remove_request import ItemRemoveRequest
 
-    access_token = storage.get_access_token(item_id)
+    from .errors import safe_provider_error
+
+    access_token = storage.get_runtime_token(item_id)
     if not access_token:
         return {"status": "not_found", "item_id": item_id}
 
     try:
         get_client().item_remove(ItemRemoveRequest(access_token=access_token))
-    except Exception as e:  # noqa: BLE001  — Plaid errors surfaced to caller
-        storage.delete_item(item_id)
-        return {"status": "locally_removed", "warning": str(e)}
+    except Exception as e:  # noqa: BLE001
+        if force_local_purge:
+            storage.delete_item(item_id)
+            return {"status": "locally_purged", "item_id": item_id,
+                    "warning": safe_provider_error(e)}
+        return {"status": "upstream_failed", "item_id": item_id,
+                "error": safe_provider_error(e), "retryable": True}
 
     storage.delete_item(item_id)
     return {"status": "removed", "item_id": item_id}
@@ -61,7 +69,7 @@ def get_balances(storage: Storage, account_id: str | None = None) -> list[dict[s
 
     out: list[dict[str, Any]] = []
     for item in items:
-        access_token = storage.get_access_token(item["item_id"])
+        access_token = storage.get_runtime_token(item["item_id"])
         if not access_token:
             continue
         try:
@@ -121,7 +129,7 @@ def sync_transactions(
 
     for item in storage.list_items():
         item_id = item["item_id"]
-        access_token = storage.get_access_token(item_id)
+        access_token = storage.get_runtime_token(item_id)
         if not access_token:
             continue
 
@@ -250,7 +258,7 @@ def refresh_transactions(
 
     results: list[dict[str, Any]] = []
     for item in items:
-        access_token = storage.get_access_token(item["item_id"])
+        access_token = storage.get_runtime_token(item["item_id"])
         if not access_token:
             continue
         try:

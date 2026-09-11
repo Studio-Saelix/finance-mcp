@@ -24,7 +24,6 @@ class Enrollment:
     id: str
     institution_id: str | None
     institution_name: str | None
-    access_token: str
     provider: str  # "plaid"
 
 

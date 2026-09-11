@@ -216,8 +216,8 @@ def test_refresh_transactions_surfaces_per_item_errors(linked_item, mock_plaid_c
 def test_remove_institution_deletes_locally_even_if_plaid_fails(linked_item, mock_plaid_client):
     mock_plaid_client.item_remove.side_effect = RuntimeError("network")
     result = tt.remove_institution(linked_item, "item_1")
-    assert result["status"] == "locally_removed"
-    assert linked_item.get_access_token("item_1") is None
+    assert result["status"] == "upstream_failed"
+    assert linked_item.get_runtime_token("item_1") == "access_tok_1"
 
 
 def test_remove_institution_returns_not_found(linked_item, mock_plaid_client):

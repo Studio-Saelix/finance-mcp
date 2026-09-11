@@ -36,7 +36,7 @@ from .tools_wealth import (
 
 def build_server() -> FastMCP:
     config = Config.from_env()
-    storage = Storage(config.db_path)
+    storage = Storage(config.db_path, config.master_key_path, create_key=False)
     if config.provider != "plaid":
         raise RuntimeError("The runtime supports only PROVIDER=plaid.")
 

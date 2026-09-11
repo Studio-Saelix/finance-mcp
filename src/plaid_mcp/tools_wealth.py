@@ -11,7 +11,7 @@ from .storage import Storage
 
 def _iter_items(storage: Storage):
     for item in storage.list_items():
-        token = storage.get_access_token(item["item_id"])
+        token = storage.get_runtime_token(item["item_id"])
         if token:
             yield item, token
 
