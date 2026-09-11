@@ -1,3 +1,3 @@
-"""plaid-mcp — read-only MCP server for Plaid-connected accounts."""
+"""Studio Saelix Finance MCP — read-only Plaid-connected account access."""
 
 __version__ = "0.1.0"

@@ -158,7 +158,7 @@ def test_sync_transactions_records_error(linked_item, mock_plaid_client):
     mock_plaid_client.transactions_sync.side_effect = RuntimeError("Plaid down")
     result = tt.sync_transactions(linked_item)
     assert "error" in result["items"][0]
-    assert "Plaid down" in result["items"][0]["error"]
+    assert result["items"][0]["error"] == "Plaid read failed: RuntimeError"
 
 
 def test_spending_summary_sums_by_category(linked_item, mock_plaid_client):
@@ -210,7 +210,7 @@ def test_refresh_transactions_surfaces_per_item_errors(linked_item, mock_plaid_c
     mock_plaid_client.transactions_refresh.side_effect = RuntimeError("PRODUCT_NOT_READY")
     result = tt.refresh_transactions(linked_item)
     assert "error" in result["items"][0]
-    assert "PRODUCT_NOT_READY" in result["items"][0]["error"]
+    assert result["items"][0]["error"] == "Plaid read failed: RuntimeError"
 
 
 def test_remove_institution_deletes_locally_even_if_plaid_fails(linked_item, mock_plaid_client):
@@ -328,7 +328,7 @@ def test_get_income_handles_not_enabled_gracefully(linked_item, mock_plaid_clien
     )
     result = tw.get_income(linked_item)
     # Error is surfaced per-item but doesn't raise.
-    assert result["income_streams"][0].get("error") == "INCOME_NOT_ENABLED"
+    assert result["income_streams"][0].get("error") == "Plaid read failed: RuntimeError"
 
 
 # ---------- tools_debt --------------------------------------------------------

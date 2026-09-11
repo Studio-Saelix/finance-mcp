@@ -12,10 +12,16 @@ def test_from_env_happy_path():
     assert cfg.client_id == "test_client_id"
     assert cfg.secret == "test_secret"
     assert cfg.env == "sandbox"
-    assert cfg.products == ["transactions", "investments", "liabilities", "identity"]
+    assert cfg.products == ["transactions", "investments", "liabilities"]
     assert cfg.country_codes == ["US"]
-    assert cfg.client_name == "plaid-mcp"
+    assert cfg.client_name == "Studio Saelix Finance MCP"
     assert str(cfg.db_path).endswith("plaid-test.db")
+    assert "identity" not in cfg.optional_products
+
+
+def test_config_default_optional_products_exclude_identity():
+    cfg = Config(client_id="test", secret="test")
+    assert cfg.optional_products == ["investments", "liabilities"]
 
 
 def test_host_mapping():
@@ -46,11 +52,3 @@ def test_products_lowercased_and_trimmed(monkeypatch):
     monkeypatch.setenv("PLAID_PRODUCTS", " Transactions ,INVESTMENTS, ")
     cfg = Config.from_env()
     assert cfg.products == ["transactions", "investments"]
-
-
-def test_auth_token_optional(monkeypatch):
-    cfg = Config.from_env()
-    assert cfg.auth_token is None
-    monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
-    cfg2 = Config.from_env()
-    assert cfg2.auth_token == "secret-token"

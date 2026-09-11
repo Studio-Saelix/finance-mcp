@@ -1,11 +1,11 @@
 [project]
-name = "plaid-mcp"
+name = "studio-saelix-finance-mcp"
 version = "0.1.0"
-description = "Read-only MCP server for analyzing Plaid-connected accounts from Claude or ChatGPT."
+description = "Read-only Studio Saelix Finance MCP server for Plaid-connected accounts."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "plaid-mcp contributors" }]
+authors = [{ name = "Studio Saelix" }]
 keywords = ["plaid", "mcp", "claude", "chatgpt", "finance", "llm", "fintech"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -29,10 +29,6 @@ dependencies = [
     "plaid-python>=36.0.0",
     "pydantic>=2.6",
     "python-dotenv>=1.0",
-    "httpx>=0.27",
-    "click>=8.1",
-    "textual>=0.80",
-    "x402[evm]>=2.8.0,<3",
 ]
 
 [project.optional-dependencies]
@@ -41,38 +37,19 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
 ]
-# Coinbase CDP facilitator support — needed for x402 on Base mainnet.
-# Install with `uv sync --extra cdp` (or `pip install "plaid-mcp[cdp]"`).
-cdp = [
-    "cdp-sdk>=1.43,<2",
-]
-# MPP (Machine Payments Protocol) via Tempo stablecoin rail — pure
-# wallet-to-wallet USDC on Tempo, no Stripe account required. Install
-# with `uv sync --extra mpp` (or `pip install "plaid-mcp[mpp]"`).
-# pympp itself requires Python >= 3.11; operators on 3.10 can still use
-# the rest of plaid-mcp including the x402 gate.
-mpp = [
-    "pympp[tempo,server,stripe]>=0.6,<1; python_version >= '3.11'",
-]
 
 [project.urls]
-Homepage = "https://github.com/t-rhex/plaid-mcp"
-Repository = "https://github.com/t-rhex/plaid-mcp"
-Issues = "https://github.com/t-rhex/plaid-mcp/issues"
-Changelog = "https://github.com/t-rhex/plaid-mcp/releases"
+Homepage = "https://github.com/Studio-Saelix/finance-mcp"
+Repository = "https://github.com/Studio-Saelix/finance-mcp"
+Issues = "https://github.com/Studio-Saelix/finance-mcp/issues"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-markers = [
-    "sandbox: tests that hit the real Plaid sandbox API (skipped without .env.test)",
-    "x402_testnet: tests that hit a live x402 facilitator on Base Sepolia (skipped without X402_TESTNET_PRIVATE_KEY)",
-    "x402_mainnet: tests that spend REAL USDC on Base mainnet (skipped unless X402_MAINNET_PRIVATE_KEY is set — opt-in only)",
-    "mpp_testnet: tests that hit a live MPP facilitator on Tempo testnet (skipped without MPP_TESTNET_PRIVATE_KEY)",
-]
+markers = ["sandbox: tests that hit the real Plaid sandbox API (skipped without .env.test)"]
 testpaths = ["tests"]
 
 [project.scripts]
-plaid-mcp = "plaid_mcp.__main__:main"
+studio-saelix-finance-mcp = "plaid_mcp.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

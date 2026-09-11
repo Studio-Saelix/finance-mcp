@@ -14,7 +14,6 @@ from plaid_mcp.providers import (
     Transaction,
     build_provider,
 )
-from plaid_mcp.providers.teller import TellerProvider
 
 # ---- helpers ----------------------------------------------------------
 
@@ -72,9 +71,8 @@ def test_capabilities_includes_investments_and_liabilities(tmp_db):
     caps = p.capabilities()
     assert Capability.INVESTMENTS in caps
     assert Capability.LIABILITIES in caps
-    assert Capability.INCOME in caps
     assert Capability.TRANSACTIONS in caps
-    assert Capability.IDENTITY in caps
+    assert not hasattr(p, "get_identity")
 
 
 # ---- list_accounts ----------------------------------------------------
@@ -239,27 +237,6 @@ def test_factory_returns_plaid_provider_when_provider_plaid(tmp_db):
     provider = build_provider(_config(provider="plaid"), storage=tmp_db)
     assert isinstance(provider, PlaidProvider)
     assert provider.name == "plaid"
-
-
-def test_factory_returns_teller_provider_when_provider_teller(tmp_db):
-    cfg = _config(
-        provider="teller",
-        teller_application_id="app_test",
-        teller_env="sandbox",
-    )
-    provider = build_provider(cfg, storage=tmp_db)
-    assert isinstance(provider, TellerProvider)
-    assert provider.name == "teller"
-
-
-def test_factory_teller_does_not_require_storage():
-    cfg = _config(
-        provider="teller",
-        teller_application_id="app_test",
-        teller_env="sandbox",
-    )
-    provider = build_provider(cfg, storage=None)
-    assert isinstance(provider, TellerProvider)
 
 
 def test_factory_raises_when_plaid_missing_storage():

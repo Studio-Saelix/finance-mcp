@@ -30,10 +30,9 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("PLAID_CLIENT_ID", "test_client_id")
     monkeypatch.setenv("PLAID_SECRET", "test_secret")
     monkeypatch.setenv("PLAID_ENV", "sandbox")
-    monkeypatch.setenv("PLAID_PRODUCTS", "transactions,investments,liabilities,identity")
+    monkeypatch.setenv("PLAID_PRODUCTS", "transactions,investments,liabilities")
     monkeypatch.setenv("PLAID_COUNTRY_CODES", "US")
     monkeypatch.setenv("PLAID_MCP_DB", str(tmp_path / "plaid-test.db"))
-    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("PLAID_WEBHOOK_URL", raising=False)
 
     # Clear the Plaid client lru_cache between tests.
