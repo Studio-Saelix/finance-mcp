@@ -20,6 +20,7 @@ _PLAID_ENVS = {
     "production": "https://production.plaid.com",
     "development": "https://production.plaid.com",  # legacy alias
 }
+_CREDENTIAL_ENVS = frozenset(("sandbox", "production"))
 
 
 def _expand(path: str) -> Path:
@@ -58,6 +59,15 @@ class Config:
             raise ValueError(
                 f"PLAID_ENV must be one of {list(_PLAID_ENVS)} (got {self.env!r})"
             ) from e
+
+    @property
+    def credential_secret_name(self) -> str:
+        if self.env not in _CREDENTIAL_ENVS:
+            raise ValueError(
+                f"Credential storage does not support environment {self.env!r}; "
+                "use sandbox or production"
+            )
+        return f"plaid_secret_{self.env}"
 
     @classmethod
     def from_env(cls, *, require_credentials: bool = True) -> Config:
@@ -141,9 +151,10 @@ class Config:
             cfg.client_id = load_database_secret(
                 cfg.db_path, cfg.master_key_path, "plaid_client_id"
             ) or ""
-            cfg.secret = load_database_secret(
-                cfg.db_path, cfg.master_key_path, f"plaid_secret_{cfg.env}"
-            ) or ""
+            if cfg.env in _CREDENTIAL_ENVS:
+                cfg.secret = load_database_secret(
+                    cfg.db_path, cfg.master_key_path, f"plaid_secret_{cfg.env}"
+                ) or ""
         except CredentialError:
             if require_credentials:
                 raise

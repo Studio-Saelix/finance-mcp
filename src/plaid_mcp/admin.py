@@ -93,18 +93,22 @@ def init() -> None:
         if not existing_config:
             cfg.env = "sandbox"
         try:
+            secret_name = cfg.credential_secret_name
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        try:
             storage = _open_storage(cfg, create_key=True)
         except CredentialError as exc:
             raise click.ClickException(str(exc)) from exc
         try:
             client_id = storage.get_secret("plaid_client_id")
-            secret = storage.get_secret("plaid_secret_sandbox")
+            secret = storage.get_secret(secret_name)
             if not client_id:
                 client_id = click.prompt("Plaid client ID", hide_input=True)
                 storage.save_secret("plaid_client_id", client_id)
             if not secret:
                 secret = click.prompt("Plaid secret", hide_input=True)
-                storage.save_secret("plaid_secret_sandbox", secret)
+                storage.save_secret(secret_name, secret)
             _write_config(cfg)
         finally:
             storage.close()
