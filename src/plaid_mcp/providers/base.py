@@ -1,11 +1,4 @@
-"""Provider Protocol — the normalized shape every bank-data source must speak.
-
-Each concrete provider (Teller, Plaid, SimpleFin, ...) is responsible for
-translating its native API into these dataclasses so MCP tools and the TUI
-can stay source-agnostic. Capabilities gate tools at runtime: a tool that
-needs ``Capability.LIABILITIES`` raises a clean error on a Teller-backed
-setup instead of crashing deep in HTTP.
-"""
+"""Normalized models and separated runtime/admin provider protocols."""
 
 from __future__ import annotations
 
@@ -32,7 +25,7 @@ class Enrollment:
     institution_id: str | None
     institution_name: str | None
     access_token: str
-    provider: str  # "teller" | "plaid"
+    provider: str  # "plaid"
 
 
 @dataclass(frozen=True)
@@ -82,12 +75,8 @@ class Identity:
     addresses: list[dict[str, Any]]
 
 
-class Provider(Protocol):
-    """All sources of bank data implement this.
-
-    Implementations live under ``plaid_mcp.providers.<name>`` and are
-    selected at runtime via the ``PROVIDER`` env var.
-    """
+class ReadProvider(Protocol):
+    """Provider authority available to the runtime: retrieval only."""
 
     name: str
 
@@ -95,26 +84,6 @@ class Provider(Protocol):
         """Which products this provider can serve. Tools that need a missing
         capability should 4xx clean rather than hit the wire."""
         ...
-
-    # Linking ---------------------------------------------------------------
-
-    def begin_enrollment(self) -> dict[str, Any]:
-        """Return whatever the UI needs to start the link flow. Shape varies:
-        Plaid returns ``{link_token, hosted_url}``; Teller returns
-        ``{application_id, environment}`` because Connect runs client-side."""
-        ...
-
-    def complete_enrollment(self, payload: dict[str, Any]) -> Enrollment:
-        """Finish a link. ``payload`` is provider-specific (e.g. Plaid's
-        link_token to poll, Teller's access_token from the Connect callback).
-        Returns the persisted Enrollment."""
-        ...
-
-    def remove_enrollment(self, enrollment: Enrollment) -> None:
-        """Best-effort revoke upstream. Local cleanup is the caller's job."""
-        ...
-
-    # Reads -----------------------------------------------------------------
 
     def list_accounts(self, enrollment: Enrollment) -> list[Account]:
         ...
@@ -131,5 +100,14 @@ class Provider(Protocol):
     ) -> list[Transaction]:
         ...
 
-    def get_identity(self, enrollment: Enrollment) -> list[Identity]:
-        ...
+class AdminProvider(Protocol):
+    """Administrator-only provider authority; never registered with FastMCP."""
+
+    def begin_enrollment(self) -> dict[str, Any]: ...
+
+    def complete_enrollment(self, payload: dict[str, Any]) -> Enrollment: ...
+
+    def remove_enrollment(self, enrollment: Enrollment) -> None: ...
+
+
+Provider = ReadProvider

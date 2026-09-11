@@ -9,6 +9,7 @@ from plaid.model.accounts_balance_get_request import AccountsBalanceGetRequest
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
 
 from .client import get_client
+from .errors import safe_provider_error
 from .storage import Storage
 
 # Plaid's /transactions/sync surfaces this on the first call after an item is linked:
@@ -68,7 +69,7 @@ def get_balances(storage: Storage, account_id: str | None = None) -> list[dict[s
                 AccountsBalanceGetRequest(access_token=access_token)
             )
         except Exception as e:  # noqa: BLE001
-            storage.set_item_error(item["item_id"], str(e))
+            storage.set_item_error(item["item_id"], safe_provider_error(e))
             continue
 
         for acct in resp["accounts"]:
@@ -139,7 +140,7 @@ def sync_transactions(
                 try:
                     probe_resp = _sync_one_page(client, access_token, None)
                 except Exception as e:  # noqa: BLE001
-                    error = str(e)
+                    error = safe_provider_error(e)
                     probe_resp = None
                     break
                 status = probe_resp.get("transactions_update_status")
@@ -182,7 +183,7 @@ def sync_transactions(
                 try:
                     resp = _sync_one_page(client, access_token, cursor)
                 except Exception as e:  # noqa: BLE001
-                    fetch_error = str(e)
+                    fetch_error = safe_provider_error(e)
                     storage.set_item_error(item_id, fetch_error)
                     break
 
@@ -264,12 +265,13 @@ def refresh_transactions(
                 }
             )
         except Exception as e:  # noqa: BLE001
-            storage.set_item_error(item["item_id"], str(e))
+            safe_error = safe_provider_error(e)
+            storage.set_item_error(item["item_id"], safe_error)
             results.append(
                 {
                     "item_id": item["item_id"],
                     "institution_name": item.get("institution_name"),
-                    "error": str(e),
+                    "error": safe_error,
                 }
             )
     return {

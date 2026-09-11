@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .client import get_client
+from .errors import safe_provider_error
 from .storage import Storage
 
 
@@ -39,7 +40,7 @@ def get_holdings(storage: Storage, account_id: str | None = None) -> dict[str, A
                 InvestmentsHoldingsGetRequest(access_token=token)
             )
         except Exception as e:  # noqa: BLE001
-            storage.set_item_error(item["item_id"], str(e))
+            storage.set_item_error(item["item_id"], safe_provider_error(e))
             continue
 
         for sec in resp.get("securities", []):
@@ -99,7 +100,7 @@ def get_investment_transactions(
                 )
             )
         except Exception as e:  # noqa: BLE001
-            storage.set_item_error(item["item_id"], str(e))
+            storage.set_item_error(item["item_id"], safe_provider_error(e))
             continue
 
         for sec in resp.get("securities", []):
@@ -147,7 +148,7 @@ def get_liabilities(storage: Storage) -> dict[str, Any]:
         try:
             resp = client.liabilities_get(LiabilitiesGetRequest(access_token=token))
         except Exception as e:  # noqa: BLE001
-            storage.set_item_error(item["item_id"], str(e))
+            storage.set_item_error(item["item_id"], safe_provider_error(e))
             continue
 
         liabilities = (resp.get("liabilities") or {})
@@ -228,7 +229,7 @@ def get_identity(storage: Storage, account_id: str | None = None) -> dict[str, A
         try:
             resp = client.identity_get(IdentityGetRequest(access_token=token))
         except Exception as e:  # noqa: BLE001
-            storage.set_item_error(item["item_id"], str(e))
+            storage.set_item_error(item["item_id"], safe_provider_error(e))
             continue
 
         for acct in resp.get("accounts", []):
@@ -295,7 +296,7 @@ def get_income(storage: Storage) -> dict[str, Any]:
                 {
                     "item_id": item["item_id"],
                     "institution_name": item.get("institution_name"),
-                    "error": str(e),
+                    "error": safe_provider_error(e),
                 }
             )
             continue
