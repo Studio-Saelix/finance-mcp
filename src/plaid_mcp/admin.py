@@ -96,13 +96,13 @@ def init() -> None:
             raise click.ClickException(str(exc)) from exc
         try:
             client_id = storage.get_secret("plaid_client_id")
-            secret = storage.get_secret("plaid_secret")
+            secret = storage.get_secret("plaid_secret_sandbox")
             if not client_id:
                 client_id = click.prompt("Plaid client ID", hide_input=True)
                 storage.save_secret("plaid_client_id", client_id)
             if not secret:
                 secret = click.prompt("Plaid secret", hide_input=True)
-                storage.save_secret("plaid_secret", secret)
+                storage.save_secret("plaid_secret_sandbox", secret)
             _write_config(cfg)
         finally:
             storage.close()
@@ -209,17 +209,9 @@ def use_production() -> None:
             if click.prompt("Type ENABLE PRODUCTION") != "ENABLE PRODUCTION":
                 raise click.Abort()
             production_secret = click.prompt("Plaid Production secret", hide_input=True)
-            old_secret = storage.get_secret("plaid_secret")
-            storage.save_secret("plaid_secret", production_secret)
-            try:
-                cfg.env = "production"
-                _write_config(cfg)
-            except Exception:
-                if old_secret is None:
-                    storage.delete_secret("plaid_secret")
-                else:
-                    storage.save_secret("plaid_secret", old_secret)
-                raise
+            storage.save_secret("plaid_secret_production", production_secret)
+            cfg.env = "production"
+            _write_config(cfg)
         finally:
             storage.close()
     click.echo("Production selected with a newly captured Production secret.")

@@ -35,7 +35,7 @@ def test_init_recovers_missing_secret_and_status_is_redacted(monkeypatch, tmp_pa
     db = tmp_path / "data" / "studio-saelix-finance" / "finance.db"
     key = tmp_path / "config" / "studio-saelix-finance" / "master.key"
     store = Storage(db, key, create_key=False)
-    store.delete_secret("plaid_secret")
+    store.delete_secret("plaid_secret_sandbox")
     store.close()
     recovered = runner.invoke(main, ["init"], input="replacement-secret\n")
     assert recovered.exit_code == 0, recovered.output
@@ -65,7 +65,7 @@ def test_production_transition_requires_empty_sandbox_and_new_secret(monkeypatch
     assert changed.exit_code == 0, changed.output
     assert "production-secret" not in changed.output
     store = Storage(db, key, create_key=False)
-    assert store.get_secret("plaid_secret") == "production-secret"
+    assert store.get_secret("plaid_secret_production") == "production-secret"
     store.close()
 
 

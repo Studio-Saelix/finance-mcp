@@ -142,7 +142,7 @@ class Config:
                 cfg.db_path, cfg.master_key_path, "plaid_client_id"
             ) or ""
             cfg.secret = load_database_secret(
-                cfg.db_path, cfg.master_key_path, "plaid_secret"
+                cfg.db_path, cfg.master_key_path, f"plaid_secret_{cfg.env}"
             ) or ""
         except CredentialError:
             if require_credentials:
