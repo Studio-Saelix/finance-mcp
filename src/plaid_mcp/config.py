@@ -8,7 +8,7 @@ from pathlib import Path
 
 import tomllib
 
-from .paths import config_path, key_path
+from .paths import config_dir, config_path, ensure_private_dir, ensure_private_file, key_path
 from .paths import db_path as default_db_path
 
 # Plaid retired the Development environment in late 2024; new accounts get a
@@ -61,26 +61,51 @@ class Config:
 
     @classmethod
     def from_env(cls, *, require_credentials: bool = True) -> Config:
+        test_overrides = os.getenv("PLAID_MCP_ALLOW_ENV_SECRETS") == "1"
         provider = os.getenv("PROVIDER", "plaid").strip().lower()
         file_config: dict = {}
         cfg_path = config_path()
+        try:
+            ensure_private_dir(config_dir())
+        except RuntimeError as exc:
+            raise RuntimeError(str(exc)) from exc
         if cfg_path.exists():
+            try:
+                ensure_private_file(cfg_path)
+            except RuntimeError as exc:
+                raise RuntimeError(str(exc)) from exc
             with cfg_path.open("rb") as fh:
                 file_config = tomllib.load(fh)
 
         client_id = ""
         secret = ""
-        env = os.getenv("PLAID_ENV", file_config.get("plaid_env", "sandbox")).strip().lower()
+        env = (os.getenv("PLAID_ENV") if test_overrides else None) or file_config.get(
+            "plaid_env", "sandbox"
+        )
+        env = env.strip().lower()
+        config_db = (
+            _expand(os.getenv("PLAID_MCP_DB"))
+            if test_overrides and os.getenv("PLAID_MCP_DB")
+            else default_db_path()
+        )
+        config_key = (
+            _expand(os.getenv("PLAID_MASTER_KEY"))
+            if test_overrides and os.getenv("PLAID_MASTER_KEY")
+            else key_path()
+        )
+        def setting(name: str, default: str) -> str:
+            return os.getenv(name, default) if test_overrides else default
+
         products = [
             p.strip().lower()
-            for p in os.getenv(
+            for p in setting(
                 "PLAID_PRODUCTS", file_config.get("products", "transactions")
             ).split(",")
             if p.strip()
         ]
         optional_products = [
             p.strip().lower()
-            for p in os.getenv("PLAID_OPTIONAL_PRODUCTS", file_config.get(
+            for p in setting("PLAID_OPTIONAL_PRODUCTS", file_config.get(
                 "optional_products", "investments,liabilities"
             )).split(",")
             if p.strip()
@@ -89,7 +114,7 @@ class Config:
         optional_products = [p for p in optional_products if p not in products]
         country_codes = [
             c.strip().upper()
-            for c in os.getenv(
+            for c in setting(
                 "PLAID_COUNTRY_CODES", file_config.get("country_codes", "CA")
             ).split(",")
             if c.strip()
@@ -102,12 +127,12 @@ class Config:
             products=products,
             optional_products=optional_products,
             country_codes=country_codes,
-            client_name=os.getenv("PLAID_CLIENT_NAME", file_config.get(
+            client_name=setting("PLAID_CLIENT_NAME", file_config.get(
                 "client_name", "Studio Saelix Finance MCP"
             )),
-            db_path=_expand(os.getenv("PLAID_MCP_DB", str(default_db_path()))),
-            master_key_path=_expand(os.getenv("PLAID_MASTER_KEY", str(key_path()))),
-            webhook_url=os.getenv("PLAID_WEBHOOK_URL") or None,
+            db_path=config_db,
+            master_key_path=config_key,
+            webhook_url=(os.getenv("PLAID_WEBHOOK_URL") if test_overrides else None) or None,
             provider=provider,
         )
         from .crypto import CredentialError, load_database_secret
@@ -124,7 +149,7 @@ class Config:
                 raise
         # Environment credentials are intentionally test/development-only and
         # require an explicit opt-in; Hermes never needs this path.
-        if os.getenv("PLAID_MCP_ALLOW_ENV_SECRETS") == "1":
+        if test_overrides:
             cfg.client_id = os.getenv("PLAID_CLIENT_ID", "").strip()
             cfg.secret = os.getenv("PLAID_SECRET", "").strip()
         if require_credentials and (not cfg.client_id or not cfg.secret):

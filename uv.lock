@@ -1364,6 +1364,7 @@ name = "studio-saelix-finance"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "cryptography" },
     { name = "fastmcp" },
     { name = "plaid-python" },
@@ -1379,6 +1380,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1" },
     { name = "cryptography", specifier = ">=43.0" },
     { name = "fastmcp", specifier = ">=2.2.0" },
     { name = "plaid-python", specifier = ">=36.0.0" },

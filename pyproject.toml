@@ -29,6 +29,7 @@ dependencies = [
     "plaid-python>=36.0.0",
     "pydantic>=2.6",
     "cryptography>=43.0",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]

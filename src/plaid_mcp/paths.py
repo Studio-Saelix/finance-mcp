@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 APP_NAME = "studio-saelix-finance"
@@ -38,3 +39,33 @@ def log_path() -> Path:
 
 def lock_dir() -> Path:
     return state_dir() / "locks"
+
+
+def ensure_private_dir(path: Path) -> None:
+    """Create/check an application-managed owner-only directory."""
+    if path.exists() and path.is_symlink():
+        raise RuntimeError(f"Sensitive directory must not be a symlink: {path}")
+    path.mkdir(parents=True, exist_ok=True)
+    info = path.stat()
+    if info.st_uid != os.getuid():
+        raise RuntimeError(f"Sensitive directory is not owned by this user: {path}")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        os.chmod(path, 0o700)
+        if stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise RuntimeError(f"Sensitive directory is not private: {path}")
+
+
+def ensure_private_file(path: Path, *, create: bool = False) -> None:
+    if path.exists() and path.is_symlink():
+        raise RuntimeError(f"Sensitive file must not be a symlink: {path}")
+    if create and not path.exists():
+        path.touch(mode=0o600)
+    if not path.exists() or not path.is_file():
+        raise RuntimeError(f"Sensitive file is missing or not a file: {path}")
+    info = path.stat()
+    if info.st_uid != os.getuid():
+        raise RuntimeError(f"Sensitive file is not owned by this user: {path}")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        os.chmod(path, 0o600)
+        if stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise RuntimeError(f"Sensitive file is not private: {path}")

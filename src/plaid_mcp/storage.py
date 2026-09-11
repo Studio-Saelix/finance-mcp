@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .crypto import CredentialError, decrypt, encrypt, load_key
+from .paths import ensure_private_dir, ensure_private_file
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -127,10 +127,12 @@ class Storage:
 
         self.db_path = db_path
         self.key_path = key_path or db_path.parent / "master.key"
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.db_path.parent.is_symlink():
-            raise CredentialError("Database directory must not be a symlink")
-        os.chmod(self.db_path.parent, 0o700)
+        try:
+            ensure_private_dir(self.db_path.parent)
+            if self.db_path.exists():
+                ensure_private_file(self.db_path)
+        except RuntimeError as exc:
+            raise CredentialError(str(exc)) from exc
         self.key = load_key(self.key_path, create=create_key)
         self._conn = sqlite3.connect(
             str(db_path), isolation_level=None, check_same_thread=False
@@ -147,13 +149,16 @@ class Storage:
                 "Legacy plaintext credentials detected; reset and relink explicitly"
             )
         try:
-            os.chmod(db_path, 0o600)
-        except OSError:
-            pass  # Windows or other fs without chmod semantics
+            ensure_private_file(db_path, create=True)
+        except RuntimeError as exc:
+            raise CredentialError(str(exc)) from exc
         for suffix in ("-wal", "-shm"):
             sidecar = Path(f"{db_path}{suffix}")
             if sidecar.exists():
-                os.chmod(sidecar, 0o600)
+                try:
+                    ensure_private_file(sidecar)
+                except RuntimeError as exc:
+                    raise CredentialError(str(exc)) from exc
 
     # ---- item / token management ------------------------------------------------
 
@@ -203,6 +208,9 @@ class Storage:
             "SELECT nonce, ciphertext FROM secrets WHERE name = ?", (name,)
         ).fetchone()
         return decrypt(self.key, row[0], row[1], purpose=f"secret:{name}") if row else None
+
+    def delete_secret(self, name: str) -> None:
+        self._conn.execute("DELETE FROM secrets WHERE name = ?", (name,))
 
     def list_items(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(

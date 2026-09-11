@@ -7,8 +7,10 @@ import re
 import sys
 from pathlib import Path
 
+from .paths import ensure_private_dir, ensure_private_file
+
 _SECRET_PATTERN = re.compile(
-    r"(?i)(?:access[_ -]?token|public[_ -]?token|link[_ -]?token|plaid[_ -]?secret|master[_ -]?key)"
+    r"(?i)(access[_ -]?token|public[_ -]?token|link[_ -]?token|plaid[_ -]?secret|master[_ -]?key)"
     r"(?:\s*[:=]\s*)[^\s,;]+"
 )
 
@@ -19,14 +21,15 @@ class RedactingFormatter(logging.Formatter):
 
 
 def configure_logging(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(mode=0o600, exist_ok=True)
-    path.chmod(0o600)
+    ensure_private_dir(path.parent)
+    ensure_private_file(path, create=True)
     logger = logging.getLogger("plaid_mcp")
     logger.setLevel(logging.INFO)
     logger.propagate = False
     if logger.handlers:
-        return
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+            handler.close()
     formatter = RedactingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     stderr = logging.StreamHandler(sys.stderr)
     stderr.setFormatter(formatter)

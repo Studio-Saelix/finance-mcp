@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -12,9 +14,20 @@ from .config import Config
 from .crypto import CredentialError
 from .link import complete_link, create_hosted_link
 from .logging_setup import configure_logging
-from .paths import config_dir, config_path, data_dir, lock_dir, log_path, state_dir
+from .paths import (
+    config_dir,
+    config_path,
+    data_dir,
+    ensure_private_dir,
+    ensure_private_file,
+    lock_dir,
+    log_path,
+    state_dir,
+)
 from .storage import Storage
 from .tools_transactions import remove_institution
+
+logger = logging.getLogger("plaid_mcp")
 
 
 @contextmanager
@@ -34,8 +47,7 @@ def _admin_lock():
 
 
 def _mkdir_private(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-    os.chmod(path, 0o700)
+    ensure_private_dir(path)
 
 
 def _write_config(cfg: Config) -> None:
@@ -46,8 +58,17 @@ def _write_config(cfg: Config) -> None:
         f'optional_products = "{",".join(cfg.optional_products)}"\n'
         f'client_name = "{cfg.client_name}"\n'
     )
-    config_path().write_text(content)
-    os.chmod(config_path(), 0o600)
+    _mkdir_private(config_dir())
+    target = config_path()
+    ensure_private_file(target, create=True) if target.exists() else None
+    with tempfile.NamedTemporaryFile("w", dir=config_dir(), prefix=".config.", delete=False) as fh:
+        temp = Path(fh.name)
+        os.fchmod(fh.fileno(), 0o600)
+        fh.write(content)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temp, target)
+    ensure_private_file(target)
 
 
 def _open_storage(cfg: Config, *, create_key: bool = False) -> Storage:
@@ -64,6 +85,7 @@ def main() -> None:
 def init() -> None:
     """Initialize private state and capture Plaid credentials interactively."""
     with _admin_lock():
+        logger.info("admin_init_start")
         for path in (config_dir(), data_dir(), state_dir(), lock_dir()):
             _mkdir_private(path)
         cfg = Config.from_env(require_credentials=False)
@@ -73,15 +95,19 @@ def init() -> None:
         except CredentialError as exc:
             raise click.ClickException(str(exc)) from exc
         try:
-            if not storage.get_secret("plaid_client_id"):
+            client_id = storage.get_secret("plaid_client_id")
+            secret = storage.get_secret("plaid_secret")
+            if not client_id:
                 client_id = click.prompt("Plaid client ID", hide_input=True)
-                secret = click.prompt("Plaid secret", hide_input=True)
                 storage.save_secret("plaid_client_id", client_id)
+            if not secret:
+                secret = click.prompt("Plaid secret", hide_input=True)
                 storage.save_secret("plaid_secret", secret)
             _write_config(cfg)
         finally:
             storage.close()
     click.echo("Initialized Sandbox state. Next: studio-saelix-finance link")
+    logger.info("admin_init_complete environment=sandbox")
 
 
 @main.command()
@@ -89,6 +115,7 @@ def init() -> None:
 def link(no_open: bool) -> None:
     """Link one institution through Plaid Hosted Link."""
     cfg = Config.from_env()
+    logger.info("admin_link_start environment=%s", cfg.env)
     with _admin_lock():
         storage = _open_storage(cfg)
         try:
@@ -119,6 +146,7 @@ def status() -> None:
         click.echo(f"Not ready: {exc}")
         return
     try:
+        logger.info("admin_status environment=%s", cfg.env)
         click.echo(f"Environment: {cfg.env}")
         items = storage.list_items()
         click.echo(f"Credential store: ready\nInstitutions: {len(items)}")
@@ -145,6 +173,7 @@ def unlink(item_id: str, force_local_purge: bool) -> None:
     elif not click.confirm("Unlink this institution upstream and remove local data?"):
         raise click.Abort()
     cfg = Config.from_env()
+    logger.info("admin_unlink_start item_id=%s force_local_purge=%s", item_id, force_local_purge)
     with _admin_lock():
         storage = _open_storage(cfg)
         try:
@@ -161,16 +190,36 @@ def unlink(item_id: str, force_local_purge: bool) -> None:
 @main.command("use-production")
 def use_production() -> None:
     """Select Production only after commissioning, audits, and human approval."""
-    cfg = Config.from_env(require_credentials=False)
-    if cfg.env == "production":
-        click.echo("Production is already selected.")
-        return
-    click.echo(
-        "Production accesses real financial data. Continue only after Sandbox "
-        "commissioning, completion/security audit, and explicit human approval."
-    )
-    if click.prompt("Type ENABLE PRODUCTION") != "ENABLE PRODUCTION":
-        raise click.Abort()
-    cfg.env = "production"
-    _write_config(cfg)
-    click.echo("Production selected. Confirm the credentials are Production before linking.")
+    with _admin_lock():
+        logger.info("admin_production_transition_start")
+        cfg = Config.from_env(require_credentials=False)
+        if cfg.env == "production":
+            click.echo("Production is already selected.")
+            return
+        storage = _open_storage(cfg)
+        try:
+            if storage.list_items():
+                raise click.ClickException(
+                    "Unlink all Sandbox Items before switching to Production"
+                )
+            click.echo(
+                "Production accesses real financial data. Continue only after Sandbox "
+                "commissioning, completion/security audit, and explicit human approval."
+            )
+            if click.prompt("Type ENABLE PRODUCTION") != "ENABLE PRODUCTION":
+                raise click.Abort()
+            production_secret = click.prompt("Plaid Production secret", hide_input=True)
+            old_secret = storage.get_secret("plaid_secret")
+            storage.save_secret("plaid_secret", production_secret)
+            try:
+                cfg.env = "production"
+                _write_config(cfg)
+            except Exception:
+                if old_secret is None:
+                    storage.delete_secret("plaid_secret")
+                else:
+                    storage.save_secret("plaid_secret", old_secret)
+                raise
+        finally:
+            storage.close()
+    click.echo("Production selected with a newly captured Production secret.")
