@@ -69,6 +69,59 @@ def test_production_transition_requires_empty_sandbox_and_new_secret(monkeypatch
     store.close()
 
 
+def test_init_preserves_production_after_transition(monkeypatch, tmp_path):
+    _isolated(monkeypatch, tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(main, ["init"], input="client\nsandbox-secret\n").exit_code == 0
+    transitioned = runner.invoke(
+        main, ["use-production"], input="ENABLE PRODUCTION\nproduction-secret\n"
+    )
+    assert transitioned.exit_code == 0, transitioned.output
+    initialized = runner.invoke(main, ["init"])
+    assert initialized.exit_code == 0, initialized.output
+    assert "Production" in initialized.output
+    from plaid_mcp.config import Config
+    assert Config.from_env(require_credentials=False).env == "production"
+
+
+def test_production_item_survives_reinit(monkeypatch, tmp_path):
+    _isolated(monkeypatch, tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(main, ["init"], input="client\nsandbox-secret\n").exit_code == 0
+    assert runner.invoke(
+        main, ["use-production"], input="ENABLE PRODUCTION\nproduction-secret\n"
+    ).exit_code == 0
+    from plaid_mcp.paths import db_path, key_path
+    store = Storage(db_path(), key_path(), create_key=False)
+    store.save_item("production-item", "production-token", "ins", "Bank", [])
+    store.close()
+    initialized = runner.invoke(main, ["init"])
+    assert initialized.exit_code == 0, initialized.output
+    store = Storage(db_path(), key_path(), create_key=False)
+    assert [item["item_id"] for item in store.list_items()] == ["production-item"]
+    store.close()
+    from plaid_mcp.config import Config
+    assert Config.from_env(require_credentials=False).env == "production"
+
+
+def test_already_production_repairs_missing_secret_without_changing_items(monkeypatch, tmp_path):
+    _isolated(monkeypatch, tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(main, ["init"], input="client\nsandbox-secret\n").exit_code == 0
+    assert runner.invoke(
+        main, ["use-production"], input="ENABLE PRODUCTION\nproduction-secret\n"
+    ).exit_code == 0
+    from plaid_mcp.paths import db_path, key_path
+    store = Storage(db_path(), key_path(), create_key=False)
+    store.save_item("production-item", "production-token", "ins", "Bank", [])
+    store.delete_secret("plaid_secret_production")
+    store.close()
+    repaired = runner.invoke(main, ["use-production"], input="repaired-secret\n")
+    assert repaired.exit_code == 0, repaired.output
+    store = Storage(db_path(), key_path(), create_key=False)
+    assert store.get_secret("plaid_secret_production") == "repaired-secret"
+    assert [item["item_id"] for item in store.list_items()] == ["production-item"]
+    store.close()
 def test_unlink_confirmation_and_failure_preserve_state(monkeypatch, tmp_path, mock_plaid_client):
     _isolated(monkeypatch, tmp_path)
     runner = CliRunner()

@@ -86,10 +86,12 @@ def init() -> None:
     """Initialize private state and capture Plaid credentials interactively."""
     with _admin_lock():
         logger.info("admin_init_start")
+        existing_config = config_path().exists()
         for path in (config_dir(), data_dir(), state_dir(), lock_dir()):
             _mkdir_private(path)
         cfg = Config.from_env(require_credentials=False)
-        cfg.env = "sandbox"
+        if not existing_config:
+            cfg.env = "sandbox"
         try:
             storage = _open_storage(cfg, create_key=True)
         except CredentialError as exc:
@@ -106,8 +108,8 @@ def init() -> None:
             _write_config(cfg)
         finally:
             storage.close()
-    click.echo("Initialized Sandbox state. Next: studio-saelix-finance link")
-    logger.info("admin_init_complete environment=sandbox")
+    click.echo(f"Initialized {cfg.env.title()} state. Next: studio-saelix-finance link")
+    logger.info("admin_init_complete environment=%s", cfg.env)
 
 
 @main.command()
@@ -194,7 +196,21 @@ def use_production() -> None:
         logger.info("admin_production_transition_start")
         cfg = Config.from_env(require_credentials=False)
         if cfg.env == "production":
-            click.echo("Production is already selected.")
+            storage = _open_storage(cfg)
+            try:
+                try:
+                    production_secret = storage.get_secret("plaid_secret_production")
+                except CredentialError:
+                    production_secret = None
+                if production_secret:
+                    click.echo("Production is already selected.")
+                    return
+                click.echo("Production is selected but its credential is missing or unusable.")
+                production_secret = click.prompt("Plaid Production secret", hide_input=True)
+                storage.save_secret("plaid_secret_production", production_secret)
+            finally:
+                storage.close()
+            click.echo("Production credential repaired; linked Items were unchanged.")
             return
         storage = _open_storage(cfg)
         try:
