@@ -36,7 +36,7 @@ from .tools_wealth import (
 
 def build_server() -> FastMCP:
     config = Config.from_env()
-    storage = Storage(config.db_path)
+    storage = Storage(config.db_path, config.master_key_path, create_key=False)
     if config.provider != "plaid":
         raise RuntimeError("The runtime supports only PROVIDER=plaid.")
 
@@ -191,6 +191,7 @@ def _get_balances(
                     "limit": balance.limit,
                     "iso_currency": balance.iso_currency,
                 })
+            storage.set_item_error(enrollment.id, None)
         return out
     finally:
         _close(provider)

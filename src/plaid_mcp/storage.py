@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,10 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .crypto import CredentialError, decrypt, encrypt, load_key
+from .paths import ensure_private_dir, ensure_private_file
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
     item_id           TEXT PRIMARY KEY,
-    access_token      TEXT NOT NULL,
+    access_token_nonce BLOB NOT NULL,
+    access_token_ciphertext BLOB NOT NULL,
     institution_id    TEXT,
     institution_name  TEXT,
     products          TEXT,          -- JSON array
@@ -63,12 +67,18 @@ CREATE INDEX IF NOT EXISTS idx_tx_merchant ON transactions(merchant_name);
 CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category);
 
 CREATE TABLE IF NOT EXISTS link_sessions (
-    link_token    TEXT PRIMARY KEY,
+    link_token_hash TEXT PRIMARY KEY,
     created_at    TEXT NOT NULL,
     status        TEXT NOT NULL,     -- pending | completed | expired
     hosted_url    TEXT,
-    public_token  TEXT,
     item_id       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS secrets (
+    name          TEXT PRIMARY KEY,
+    nonce         BLOB NOT NULL,
+    ciphertext    BLOB NOT NULL,
+    updated_at    TEXT NOT NULL
 );
 
 -- User-supplied corrections to APR / promo data that Plaid doesn't surface
@@ -112,23 +122,43 @@ class Storage:
     through a lock to serialize access.
     """
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, key_path: Path | None = None, *, create_key: bool = True):
         import threading
 
         self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.key_path = key_path or db_path.parent / "master.key"
+        try:
+            ensure_private_dir(self.db_path.parent)
+            if self.db_path.exists():
+                ensure_private_file(self.db_path)
+        except RuntimeError as exc:
+            raise CredentialError(str(exc)) from exc
+        self.key = load_key(self.key_path, create=create_key)
         self._conn = sqlite3.connect(
             str(db_path), isolation_level=None, check_same_thread=False
         )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._conn.execute("PRAGMA busy_timeout=5000;")
         self._conn.execute("PRAGMA foreign_keys=ON;")
         self._lock = threading.RLock()
         self._conn.executescript(SCHEMA)
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(items)")}
+        if "access_token" in columns:
+            raise CredentialError(
+                "Legacy plaintext credentials detected; reset and relink explicitly"
+            )
         try:
-            os.chmod(db_path, 0o600)
-        except OSError:
-            pass  # Windows or other fs without chmod semantics
+            ensure_private_file(db_path, create=True)
+        except RuntimeError as exc:
+            raise CredentialError(str(exc)) from exc
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{db_path}{suffix}")
+            if sidecar.exists():
+                try:
+                    ensure_private_file(sidecar)
+                except RuntimeError as exc:
+                    raise CredentialError(str(exc)) from exc
 
     # ---- item / token management ------------------------------------------------
 
@@ -142,13 +172,13 @@ class Storage:
     ) -> None:
         self._conn.execute(
             """INSERT OR REPLACE INTO items
-               (item_id, access_token, institution_id, institution_name, products, created_at)
-               VALUES (?, ?, ?, ?, ?, COALESCE(
+               (item_id, access_token_nonce, access_token_ciphertext, institution_id,
+                institution_name, products, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, COALESCE(
                    (SELECT created_at FROM items WHERE item_id = ?), ?
                ))""",
-            (
-                item_id,
-                access_token,
+            (item_id,
+                *encrypt(self.key, access_token, purpose=f"item:{item_id}"),
                 institution_id,
                 institution_name,
                 json.dumps(products or []),
@@ -157,11 +187,30 @@ class Storage:
             ),
         )
 
-    def get_access_token(self, item_id: str) -> str | None:
+    def get_runtime_token(self, item_id: str) -> str | None:
         row = self._conn.execute(
-            "SELECT access_token FROM items WHERE item_id = ?", (item_id,)
+            "SELECT access_token_nonce, access_token_ciphertext FROM items "
+            "WHERE item_id = ?",
+            (item_id,),
         ).fetchone()
-        return row["access_token"] if row else None
+        return decrypt(self.key, row[0], row[1], purpose=f"item:{item_id}") if row else None
+
+    def save_secret(self, name: str, value: str) -> None:
+        nonce, ciphertext = encrypt(self.key, value, purpose=f"secret:{name}")
+        self._conn.execute(
+            "INSERT OR REPLACE INTO secrets(name, nonce, ciphertext, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (name, nonce, ciphertext, _utcnow()),
+        )
+
+    def get_secret(self, name: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT nonce, ciphertext FROM secrets WHERE name = ?", (name,)
+        ).fetchone()
+        return decrypt(self.key, row[0], row[1], purpose=f"secret:{name}") if row else None
+
+    def delete_secret(self, name: str) -> None:
+        self._conn.execute("DELETE FROM secrets WHERE name = ?", (name,))
 
     def list_items(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
@@ -175,8 +224,20 @@ class Storage:
             out.append(d)
         return out
 
-    def delete_item(self, item_id: str) -> None:
-        self._conn.execute("DELETE FROM items WHERE item_id = ?", (item_id,))
+    def purge_item_state(self, item_id: str) -> None:
+        """Atomically delete an Item and every local record derived from it."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute("DELETE FROM transactions WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM link_sessions WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM sync_cursors WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM accounts WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM items WHERE item_id = ?", (item_id,))
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
 
     def set_item_error(self, item_id: str, error: str | None) -> None:
         self._conn.execute(
@@ -211,6 +272,12 @@ class Storage:
                ORDER BY i.institution_name, a.name"""
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def count_accounts(self, item_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS count FROM accounts WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        return int(row["count"])
 
     def get_account_item(self, account_id: str) -> str | None:
         row = self._conn.execute(
@@ -344,26 +411,29 @@ class Storage:
     # ---- link sessions ----------------------------------------------------------
 
     def save_link_session(self, link_token: str, hosted_url: str | None) -> None:
+        token_hash = hashlib.sha256(link_token.encode()).hexdigest()
         self._conn.execute(
             """INSERT OR REPLACE INTO link_sessions
-               (link_token, created_at, status, hosted_url)
+               (link_token_hash, created_at, status, hosted_url)
                VALUES (?, ?, 'pending', ?)""",
-            (link_token, _utcnow(), hosted_url),
+            (token_hash, _utcnow(), hosted_url),
         )
 
     def complete_link_session(
         self, link_token: str, public_token: str, item_id: str
     ) -> None:
+        token_hash = hashlib.sha256(link_token.encode()).hexdigest()
         self._conn.execute(
             """UPDATE link_sessions
-               SET status = 'completed', public_token = ?, item_id = ?
-               WHERE link_token = ?""",
-            (public_token, item_id, link_token),
+               SET status = 'completed', item_id = ?, hosted_url = NULL
+               WHERE link_token_hash = ?""",
+            (item_id, token_hash),
         )
 
     def get_link_session(self, link_token: str) -> dict[str, Any] | None:
         row = self._conn.execute(
-            "SELECT * FROM link_sessions WHERE link_token = ?", (link_token,)
+            "SELECT * FROM link_sessions WHERE link_token_hash = ?",
+            (hashlib.sha256(link_token.encode()).hexdigest(),),
         ).fetchone()
         return dict(row) if row else None
 

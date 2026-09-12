@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
+
+import pytest
+
 
 def test_save_and_get_item(tmp_db):
     tmp_db.save_item(
@@ -11,7 +15,7 @@ def test_save_and_get_item(tmp_db):
         institution_name="Test Bank",
         products=["transactions"],
     )
-    assert tmp_db.get_access_token("item_1") == "tok_1"
+    assert tmp_db.get_runtime_token("item_1") == "tok_1"
 
     items = tmp_db.list_items()
     assert len(items) == 1
@@ -25,17 +29,17 @@ def test_save_item_preserves_created_at_on_update(tmp_db):
     # Re-save (e.g. token rotation) and verify created_at is stable.
     tmp_db.save_item("item_1", "tok_2", "ins_1", "Bank", ["transactions"])
     assert tmp_db.list_items()[0]["created_at"] == original
-    assert tmp_db.get_access_token("item_1") == "tok_2"
+    assert tmp_db.get_runtime_token("item_1") == "tok_2"
 
 
-def test_delete_item_cascades(tmp_db):
+def test_purge_item_state_removes_item_accounts_and_cursor(tmp_db):
     tmp_db.save_item("item_1", "tok_1", "ins_1", "Bank", ["transactions"])
     tmp_db.upsert_account("item_1", {"account_id": "acct_1", "name": "Checking"})
     tmp_db.set_cursor("item_1", "cursor_v1")
 
-    tmp_db.delete_item("item_1")
+    tmp_db.purge_item_state("item_1")
 
-    assert tmp_db.get_access_token("item_1") is None
+    assert tmp_db.get_runtime_token("item_1") is None
     assert tmp_db.list_accounts() == []
     assert tmp_db.get_cursor("item_1") is None
 
@@ -145,7 +149,6 @@ def test_aggregate_transactions_sums_by_category(tmp_db):
 
 
 def test_aggregate_invalid_group_by_raises(tmp_db):
-    import pytest
     with pytest.raises(ValueError, match="group_by must be one of"):
         tmp_db.aggregate_transactions("2026-01-01", "2026-12-31", group_by="bogus")
 
@@ -160,8 +163,71 @@ def test_link_session_lifecycle(tmp_db):
     tmp_db.complete_link_session("link_tok", public_token="pub_X", item_id="item_X")
     session = tmp_db.get_link_session("link_tok")
     assert session["status"] == "completed"
-    assert session["public_token"] == "pub_X"
     assert session["item_id"] == "item_X"
+    assert session["hosted_url"] is None
+
+
+def test_purge_item_state_removes_derived_rows_and_preserves_other_items(tmp_db):
+    for item_id, account_id in (("item_1", "acct_1"), ("item_2", "acct_2")):
+        tmp_db.save_item(item_id, f"token-{item_id}", None, None, ["transactions"])
+        tmp_db.upsert_account(item_id, {"account_id": account_id, "name": "Checking"})
+        tmp_db.set_cursor(item_id, f"cursor-{item_id}")
+        tmp_db.upsert_transaction(
+            item_id,
+            {
+                "transaction_id": f"tx-{item_id}",
+                "account_id": account_id,
+                "amount": 10,
+                "date": "2026-04-01",
+                "name": "test",
+                "pending": False,
+            },
+        )
+        link_token = f"link-{item_id}"
+        tmp_db.save_link_session(link_token, f"https://example.test/{item_id}")
+        tmp_db.complete_link_session(link_token, f"public-{item_id}", item_id)
+
+    tmp_db.purge_item_state("item_1")
+
+    assert tmp_db.get_runtime_token("item_1") is None
+    assert tmp_db.get_cursor("item_1") is None
+    assert [account["account_id"] for account in tmp_db.list_accounts()] == ["acct_2"]
+    assert [
+        row["transaction_id"] for row in tmp_db.query_transactions("2026-01-01", "2026-12-31")
+    ] == ["tx-item_2"]
+    assert tmp_db.get_link_session("link-item_1") is None
+    remaining_session = tmp_db.get_link_session("link-item_2")
+    assert remaining_session["status"] == "completed"
+    assert remaining_session["hosted_url"] is None
+    assert remaining_session["item_id"] == "item_2"
+
+
+def test_purge_item_state_rolls_back_all_deletes_on_failure(tmp_db):
+    tmp_db.save_item("item_1", "token-1", None, None, ["transactions"])
+    tmp_db.upsert_account("item_1", {"account_id": "acct_1"})
+    tmp_db.set_cursor("item_1", "cursor-1")
+    tmp_db.upsert_transaction(
+        "item_1",
+        {"transaction_id": "tx-1", "account_id": "acct_1", "date": "2026-04-01"},
+    )
+    tmp_db.save_link_session("link-1", "https://example.test/1")
+    tmp_db.complete_link_session("link-1", "public-1", "item_1")
+    tmp_db._conn.execute(
+        """CREATE TRIGGER reject_item_delete BEFORE DELETE ON items
+           WHEN OLD.item_id = 'item_1'
+           BEGIN SELECT RAISE(ABORT, 'test abort'); END"""
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="test abort"):
+        tmp_db.purge_item_state("item_1")
+
+    assert tmp_db.get_runtime_token("item_1") == "token-1"
+    assert tmp_db.get_cursor("item_1") == "cursor-1"
+    assert [account["account_id"] for account in tmp_db.list_accounts()] == ["acct_1"]
+    assert [
+        row["transaction_id"] for row in tmp_db.query_transactions("2026-01-01", "2026-12-31")
+    ] == ["tx-1"]
+    assert tmp_db.get_link_session("link-1")["item_id"] == "item_1"
 
 
 def test_delete_transaction(tmp_db):

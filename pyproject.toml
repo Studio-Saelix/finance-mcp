@@ -1,5 +1,5 @@
 [project]
-name = "studio-saelix-finance-mcp"
+name = "studio-saelix-finance"
 version = "0.1.0"
 description = "Read-only Studio Saelix Finance MCP server for Plaid-connected accounts."
 readme = "README.md"
@@ -28,7 +28,8 @@ dependencies = [
     "fastmcp>=2.2.0",
     "plaid-python>=36.0.0",
     "pydantic>=2.6",
-    "python-dotenv>=1.0",
+    "cryptography>=43.0",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +50,7 @@ markers = ["sandbox: tests that hit the real Plaid sandbox API (skipped without 
 testpaths = ["tests"]
 
 [project.scripts]
+studio-saelix-finance = "plaid_mcp.admin:main"
 studio-saelix-finance-mcp = "plaid_mcp.__main__:main"
 
 [build-system]

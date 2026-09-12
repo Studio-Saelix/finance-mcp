@@ -115,10 +115,7 @@ def complete_link(
 
     session = storage.get_link_session(link_token)
     if not session:
-        raise RuntimeError(
-            f"No pending link session for token {link_token[:12]}… "
-            "Call link_account first."
-        )
+        raise RuntimeError("No pending Link session. Run the administrator link command first.")
 
     public_token = _poll_for_public_token(link_token, timeout_s=timeout_s)
     if not public_token:

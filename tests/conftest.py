@@ -33,6 +33,10 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("PLAID_PRODUCTS", "transactions,investments,liabilities")
     monkeypatch.setenv("PLAID_COUNTRY_CODES", "US")
     monkeypatch.setenv("PLAID_MCP_DB", str(tmp_path / "plaid-test.db"))
+    monkeypatch.setenv("PLAID_MASTER_KEY", str(tmp_path / "master.key"))
+    monkeypatch.setenv("PLAID_MCP_ALLOW_ENV_SECRETS", "1")
+    from plaid_mcp.crypto import create_key
+    create_key(tmp_path / "master.key")
     monkeypatch.delenv("PLAID_WEBHOOK_URL", raising=False)
 
     # Clear the Plaid client lru_cache between tests.
@@ -45,7 +49,7 @@ def _env(monkeypatch, tmp_path):
 def tmp_db(tmp_path) -> Storage:
     """Fresh SQLite store rooted in a tmp dir. Callers can mutate freely."""
     db_path = tmp_path / "plaid-test.db"
-    storage = Storage(db_path)
+    storage = Storage(db_path, Path(os.environ["PLAID_MASTER_KEY"]))
     try:
         yield storage
     finally:

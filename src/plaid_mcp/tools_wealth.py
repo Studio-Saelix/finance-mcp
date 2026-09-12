@@ -11,7 +11,7 @@ from .storage import Storage
 
 def _iter_items(storage: Storage):
     for item in storage.list_items():
-        token = storage.get_access_token(item["item_id"])
+        token = storage.get_runtime_token(item["item_id"])
         if token:
             yield item, token
 
@@ -66,6 +66,7 @@ def get_holdings(storage: Storage, account_id: str | None = None) -> dict[str, A
                     "iso_currency": h.get("iso_currency_code"),
                 }
             )
+        storage.set_item_error(item["item_id"], None)
     return {"holdings": holdings}
 
 
@@ -128,6 +129,7 @@ def get_investment_transactions(
                     "iso_currency": tx.get("iso_currency_code"),
                 }
             )
+        storage.set_item_error(item["item_id"], None)
 
     return {"transactions": transactions}
 
@@ -211,6 +213,7 @@ def get_liabilities(storage: Storage) -> dict[str, Any]:
                     "past_due_amount": m.get("past_due_amount"),
                 }
             )
+        storage.set_item_error(item["item_id"], None)
 
     return {"credit_cards": credit, "student_loans": student, "mortgages": mortgage}
 
@@ -263,6 +266,7 @@ def get_identity(storage: Storage, account_id: str | None = None) -> dict[str, A
                     ],
                 }
             )
+        storage.set_item_error(item["item_id"], None)
     return {"identities": out}
 
 
