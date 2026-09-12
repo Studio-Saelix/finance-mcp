@@ -39,9 +39,7 @@ class Config:
     # the link still succeeds if not. Keeps a single server config usable
     # across banks (Citi = no investments), brokers (Fidelity = no liabilities),
     # etc. without requiring separate .env files per bank.
-    optional_products: list[str] = field(
-        default_factory=lambda: ["investments", "liabilities"]
-    )
+    optional_products: list[str] = field(default_factory=lambda: ["investments", "liabilities"])
     country_codes: list[str] = field(default_factory=lambda: ["US"])
     client_name: str = "Studio Saelix Finance MCP"
     db_path: Path = field(default_factory=default_db_path)
@@ -103,30 +101,32 @@ class Config:
             if test_overrides and os.getenv("PLAID_MASTER_KEY")
             else key_path()
         )
+
         def setting(name: str, default: str) -> str:
             return os.getenv(name, default) if test_overrides else default
 
         products = [
             p.strip().lower()
-            for p in setting(
-                "PLAID_PRODUCTS", file_config.get("products", "transactions")
-            ).split(",")
+            for p in setting("PLAID_PRODUCTS", file_config.get("products", "transactions")).split(
+                ","
+            )
             if p.strip()
         ]
         optional_products = [
             p.strip().lower()
-            for p in setting("PLAID_OPTIONAL_PRODUCTS", file_config.get(
-                "optional_products", "investments,liabilities"
-            )).split(",")
+            for p in setting(
+                "PLAID_OPTIONAL_PRODUCTS",
+                file_config.get("optional_products", "investments,liabilities"),
+            ).split(",")
             if p.strip()
         ]
         # Anything already in the required list shouldn't appear in optional.
         optional_products = [p for p in optional_products if p not in products]
         country_codes = [
             c.strip().upper()
-            for c in setting(
-                "PLAID_COUNTRY_CODES", file_config.get("country_codes", "CA")
-            ).split(",")
+            for c in setting("PLAID_COUNTRY_CODES", file_config.get("country_codes", "CA")).split(
+                ","
+            )
             if c.strip()
         ]
 
@@ -137,9 +137,9 @@ class Config:
             products=products,
             optional_products=optional_products,
             country_codes=country_codes,
-            client_name=setting("PLAID_CLIENT_NAME", file_config.get(
-                "client_name", "Studio Saelix Finance MCP"
-            )),
+            client_name=setting(
+                "PLAID_CLIENT_NAME", file_config.get("client_name", "Studio Saelix Finance MCP")
+            ),
             db_path=config_db,
             master_key_path=config_key,
             webhook_url=(os.getenv("PLAID_WEBHOOK_URL") if test_overrides else None) or None,
@@ -148,25 +148,34 @@ class Config:
         from .crypto import CredentialError, load_database_secret
 
         try:
-            cfg.client_id = load_database_secret(
-                cfg.db_path, cfg.master_key_path, "plaid_client_id"
-            ) or ""
+            cfg.client_id = (
+                load_database_secret(cfg.db_path, cfg.master_key_path, "plaid_client_id") or ""
+            )
             if cfg.env in _CREDENTIAL_ENVS:
-                cfg.secret = load_database_secret(
-                    cfg.db_path, cfg.master_key_path, f"plaid_secret_{cfg.env}"
-                ) or ""
+                cfg.secret = (
+                    load_database_secret(
+                        cfg.db_path, cfg.master_key_path, f"plaid_secret_{cfg.env}"
+                    )
+                    or ""
+                )
         except CredentialError:
             if require_credentials:
                 raise
         # Environment credentials are intentionally test/development-only and
         # require an explicit opt-in; Hermes never needs this path.
         if test_overrides:
-            cfg.client_id = os.getenv("PLAID_CLIENT_ID", "").strip()
-            cfg.secret = os.getenv("PLAID_SECRET", "").strip()
+            cfg.client_id = os.getenv("PLAID_CLIENT_ID", "")
+            cfg.secret = os.getenv("PLAID_SECRET", "")
         if require_credentials and (not cfg.client_id or not cfg.secret):
-            raise RuntimeError(
-                "Finance MCP is not initialized. Run `studio-saelix-finance init`."
-            )
+            raise RuntimeError("Finance MCP is not initialized. Run `studio-saelix-finance init`.")
+        if require_credentials:
+            from .credentials import CredentialValidationError, validate_credential
+
+            try:
+                validate_credential(cfg.client_id, "Plaid client ID")
+                validate_credential(cfg.secret, "Plaid secret")
+            except CredentialValidationError as exc:
+                raise RuntimeError(str(exc)) from exc
         return cfg
 
     def as_products(self):  # -> list[plaid.model.products.Products]

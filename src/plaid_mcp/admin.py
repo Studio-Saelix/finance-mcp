@@ -9,8 +9,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import click
+from plaid.exceptions import ApiException
 
 from .config import Config
+from .credentials import CredentialValidationError, validate_credential
 from .crypto import CredentialError
 from .link import complete_link, create_hosted_link
 from .logging_setup import configure_logging
@@ -75,6 +77,34 @@ def _open_storage(cfg: Config, *, create_key: bool = False) -> Storage:
     return Storage(cfg.db_path, cfg.master_key_path, create_key=create_key)
 
 
+def _prompt_credential(label: str) -> str:
+    while True:
+        value = click.prompt(label, hide_input=True)
+        try:
+            return validate_credential(value, label)
+        except CredentialValidationError as exc:
+            click.echo(str(exc), err=True)
+
+
+def _credential_issue(value: str | None, label: str) -> str | None:
+    if value is None:
+        return f"{label} must not be empty"
+    try:
+        validate_credential(value, label)
+    except CredentialValidationError as exc:
+        return str(exc)
+    return None
+
+
+def _report_provider_error(exc: ApiException) -> click.ClickException:
+    status = exc.status if isinstance(exc.status, int) else None
+    logger.warning("admin_provider_failure provider=Plaid status=%s", status)
+    message = "Plaid request failed"
+    if status is not None:
+        message += f" (HTTP {status})"
+    return click.ClickException(message + ".")
+
+
 @click.group()
 def main() -> None:
     """Studio Saelix Finance administrator commands."""
@@ -103,11 +133,17 @@ def init() -> None:
         try:
             client_id = storage.get_secret("plaid_client_id")
             secret = storage.get_secret(secret_name)
-            if not client_id:
-                client_id = click.prompt("Plaid client ID", hide_input=True)
+            issue = _credential_issue(client_id, "Plaid client ID")
+            if issue:
+                if client_id is not None:
+                    click.echo(f"Stored Plaid client ID needs repair: {issue}", err=True)
+                client_id = _prompt_credential("Plaid client ID")
                 storage.save_secret("plaid_client_id", client_id)
-            if not secret:
-                secret = click.prompt("Plaid secret", hide_input=True)
+            issue = _credential_issue(secret, "Plaid secret")
+            if issue:
+                if secret is not None:
+                    click.echo(f"Stored Plaid secret needs repair: {issue}", err=True)
+                secret = _prompt_credential("Plaid secret")
                 storage.save_secret(secret_name, secret)
             _write_config(cfg)
         finally:
@@ -125,19 +161,25 @@ def link(no_open: bool) -> None:
     with _admin_lock():
         storage = _open_storage(cfg)
         try:
-            session = create_hosted_link(storage, cfg, user_id="studio-saelix-finance-user")
-            url = session.get("hosted_url")
-            if not url:
-                raise click.ClickException("Plaid did not return a Hosted Link URL")
-            click.echo(f"Open this URL in your browser:\n\n  {url}")
-            if not no_open:
-                import webbrowser
-                webbrowser.open(url)
-            result = complete_link(storage, session["link_token"], timeout_s=600)
-            if result.get("status") != "completed":
-                raise click.ClickException(result.get("message", "Link did not complete"))
-            click.echo(f"Linked {result.get('institution_name') or 'institution'} "
-                       f"({result['accounts']} accounts).")
+            try:
+                session = create_hosted_link(storage, cfg, user_id="studio-saelix-finance-user")
+                url = session.get("hosted_url")
+                if not url:
+                    raise click.ClickException("Plaid did not return a Hosted Link URL")
+                click.echo(f"Open this URL in your browser:\n\n  {url}")
+                if not no_open:
+                    import webbrowser
+
+                    webbrowser.open(url)
+                result = complete_link(storage, session["link_token"], timeout_s=600)
+                if result.get("status") != "completed":
+                    raise click.ClickException(result.get("message", "Link did not complete"))
+                click.echo(
+                    f"Linked {result.get('institution_name') or 'institution'} "
+                    f"({result['accounts']} accounts)."
+                )
+            except ApiException as exc:
+                raise _report_provider_error(exc) from None
         finally:
             storage.close()
 
@@ -157,9 +199,11 @@ def status() -> None:
         items = storage.list_items()
         click.echo(f"Credential store: ready\nInstitutions: {len(items)}")
         for item in items:
-            click.echo(f"- {item.get('institution_name') or '(unknown)'} "
-                       f"({storage.count_accounts(item['item_id'])} accounts) "
-                       f"health={item.get('last_error') or 'ok'}")
+            click.echo(
+                f"- {item.get('institution_name') or '(unknown)'} "
+                f"({storage.count_accounts(item['item_id'])} accounts) "
+                f"health={item.get('last_error') or 'ok'}"
+            )
     finally:
         storage.close()
 
@@ -186,9 +230,7 @@ def unlink(item_id: str, force_local_purge: bool) -> None:
             result = remove_institution(storage, item_id, force_local_purge=force_local_purge)
             click.echo(result.get("error") or result.get("status"))
             if result.get("status") == "upstream_failed":
-                raise click.ClickException(
-                    "Upstream removal failed; local state was preserved"
-                )
+                raise click.ClickException("Upstream removal failed; local state was preserved")
         finally:
             storage.close()
 
@@ -206,11 +248,13 @@ def use_production() -> None:
                     production_secret = storage.get_secret("plaid_secret_production")
                 except CredentialError:
                     production_secret = None
-                if production_secret:
+                if production_secret and not _credential_issue(
+                    production_secret, "Plaid Production secret"
+                ):
                     click.echo("Production is already selected.")
                     return
                 click.echo("Production is selected but its credential is missing or unusable.")
-                production_secret = click.prompt("Plaid Production secret", hide_input=True)
+                production_secret = _prompt_credential("Plaid Production secret")
                 storage.save_secret("plaid_secret_production", production_secret)
             finally:
                 storage.close()
@@ -228,7 +272,7 @@ def use_production() -> None:
             )
             if click.prompt("Type ENABLE PRODUCTION") != "ENABLE PRODUCTION":
                 raise click.Abort()
-            production_secret = click.prompt("Plaid Production secret", hide_input=True)
+            production_secret = _prompt_credential("Plaid Production secret")
             storage.save_secret("plaid_secret_production", production_secret)
             cfg.env = "production"
             _write_config(cfg)
