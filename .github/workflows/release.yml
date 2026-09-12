@@ -50,7 +50,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     environment:
       name: pypi
-      url: https://pypi.org/p/plaid-mcp
+      url: https://pypi.org/p/studio-saelix-finance
     permissions:
       id-token: write
     steps:

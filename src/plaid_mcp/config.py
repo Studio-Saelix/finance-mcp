@@ -6,7 +6,10 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from .paths import config_dir, config_path, ensure_private_dir, ensure_private_file, key_path
 from .paths import db_path as default_db_path

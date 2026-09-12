@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import sys
 
-from .crypto import CredentialError
 from .logging_setup import configure_logging
 from .paths import log_path
 from .server import build_server
@@ -22,9 +21,9 @@ def main() -> None:
     try:
         try:
             server = build_server()
-        except CredentialError:
-            logger.error("runtime_start_failed reason=credential_store_unavailable")
-            print("Finance MCP credential store is unavailable.", file=sys.stderr)
+        except RuntimeError:
+            logger.error("runtime_start_failed reason=local_state_unavailable")
+            print("Finance MCP could not start because local state is not ready.", file=sys.stderr)
             raise SystemExit(1) from None
         server.run()
     finally:
