@@ -3,8 +3,16 @@
 !.env.example
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# Local application data and runtime logs.
+.plaid-mcp/
+*.log
 
 # Never commit credential bundles. Catches stray CDP / Teller keys
 # that drop into the repo root via the browser.
@@ -12,6 +20,9 @@
 *api_key*.pem
 cdp_*.json
 teller.zip
+*.key
+*.pem
+*.crt
 
 __pycache__/
 *.py[cod]
@@ -34,3 +45,6 @@ htmlcov/
 # Local agent / session state
 .claude/
 pytest-cache-files-*/
+Agent.md
+
+docs/
