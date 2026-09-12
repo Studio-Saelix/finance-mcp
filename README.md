@@ -24,14 +24,20 @@ managed virtual environment. `uvx` creates an isolated environment for each
 tool invocation:
 
 ```bash
-uvx studio-saelix-finance init
-uvx studio-saelix-finance link
-uvx studio-saelix-finance status
+uvx --from 'studio-saelix-finance==0.1.0' studio-saelix-finance init
+uvx --from 'studio-saelix-finance==0.1.0' studio-saelix-finance link
+uvx --from 'studio-saelix-finance==0.1.0' studio-saelix-finance status
 ```
 
-`init` defaults to Plaid Sandbox and interactively captures the Plaid client ID
-and secret. They are encrypted into the local SQLite store; the encryption key
-is kept separately at `~/.config/studio-saelix-finance/master.key`.
+On a new installation, `init` selects Plaid Sandbox and prompts for the Plaid
+client ID and secret with hidden input. Enter them only at these prompts; do not
+put credentials in command arguments, environment variables, `.env` files, or
+MCP client configuration. They are encrypted into the local SQLite store; the
+encryption key is kept separately at
+`~/.config/studio-saelix-finance/master.key`.
+Plaid access tokens are encrypted in the local database as well. The
+administrator lifecycle uses POSIX file permissions and locking, so the current
+supported platforms are Linux and macOS.
 
 The financial cache is intentionally plaintext inside the owner-protected
 database. Phase 2 protects the Plaid secret and access tokens against theft of
@@ -62,10 +68,11 @@ Persistent paths follow XDG conventions:
 ~/.local/state/studio-saelix-finance/finance.log
 ```
 
-For a Canadian deployment, set `PLAID_COUNTRY_CODES=CA` through the
-administrator-managed non-secret configuration. Production is a deliberate
-administrator action and must not be used before Sandbox commissioning and
-the separate security/completion approval.
+The administrator-managed non-secret configuration is stored at
+`~/.config/studio-saelix-finance/config.toml`; new installations default to
+Canada (`CA`) and Plaid Sandbox. Production is a deliberate administrator
+action and must not be used before Sandbox commissioning and the separate
+security/completion approval.
 
 ## Development
 

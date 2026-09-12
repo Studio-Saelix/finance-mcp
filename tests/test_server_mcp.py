@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from click.testing import CliRunner
 from fastmcp import Client
 
@@ -46,6 +47,28 @@ async def test_tool_schema_has_product_names_and_descriptions():
         tools = {tool.name: tool for tool in await client.list_tools()}
     assert tools["spending_summary"].description
     assert "category" in tools["spending_summary"].description.lower()
+
+
+def test_runtime_startup_failure_is_sanitized(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+    def fail_startup():
+        raise RuntimeError("private SQLite detail and secret value")
+
+    monkeypatch.setattr("plaid_mcp.__main__.build_server", fail_startup)
+    with pytest.raises(SystemExit) as result:
+        from plaid_mcp.__main__ import main
+
+        main()
+
+    captured = capsys.readouterr()
+    assert result.value.code == 1
+    assert "local state is not ready" in captured.err
+    assert "Traceback" not in captured.err
+    assert "SQLite" not in captured.err
+    assert "secret value" not in captured.err
 
 
 def test_runtime_balance_recovery_clears_item_health_and_status(
