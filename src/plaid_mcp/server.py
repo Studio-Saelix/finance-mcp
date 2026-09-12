@@ -191,6 +191,7 @@ def _get_balances(
                     "limit": balance.limit,
                     "iso_currency": balance.iso_currency,
                 })
+            storage.set_item_error(enrollment.id, None)
         return out
     finally:
         _close(provider)

@@ -77,6 +77,13 @@ def _open_storage(cfg: Config, *, create_key: bool = False) -> Storage:
     return Storage(cfg.db_path, cfg.master_key_path, create_key=create_key)
 
 
+def _admin_config(*, require_credentials: bool = True) -> Config:
+    try:
+        return Config.from_env(require_credentials=require_credentials)
+    except CredentialError as exc:
+        raise click.ClickException(str(exc)) from None
+
+
 def _prompt_credential(label: str) -> str:
     while True:
         value = click.prompt(label, hide_input=True)
@@ -119,7 +126,7 @@ def init() -> None:
         existing_config = config_path().exists()
         for path in (config_dir(), data_dir(), state_dir(), lock_dir()):
             _mkdir_private(path)
-        cfg = Config.from_env(require_credentials=False)
+        cfg = _admin_config(require_credentials=False)
         if not existing_config:
             cfg.env = "sandbox"
         try:
@@ -156,7 +163,7 @@ def init() -> None:
 @click.option("--no-open", is_flag=True, help="Do not open the browser")
 def link(no_open: bool) -> None:
     """Link one institution through Plaid Hosted Link."""
-    cfg = Config.from_env()
+    cfg = _admin_config()
     logger.info("admin_link_start environment=%s", cfg.env)
     with _admin_lock():
         storage = _open_storage(cfg)
@@ -222,7 +229,7 @@ def unlink(item_id: str, force_local_purge: bool) -> None:
             raise click.Abort()
     elif not click.confirm("Unlink this institution upstream and remove local data?"):
         raise click.Abort()
-    cfg = Config.from_env()
+    cfg = _admin_config()
     logger.info("admin_unlink_start item_id=%s force_local_purge=%s", item_id, force_local_purge)
     with _admin_lock():
         storage = _open_storage(cfg)
@@ -240,7 +247,7 @@ def use_production() -> None:
     """Select Production only after commissioning, audits, and human approval."""
     with _admin_lock():
         logger.info("admin_production_transition_start")
-        cfg = Config.from_env(require_credentials=False)
+        cfg = _admin_config(require_credentials=False)
         if cfg.env == "production":
             storage = _open_storage(cfg)
             try:

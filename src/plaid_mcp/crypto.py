@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -14,6 +15,10 @@ NONCE_BYTES = 12
 
 class CredentialError(RuntimeError):
     """Raised when protected credential material is unavailable or invalid."""
+
+
+class CredentialStoreError(CredentialError):
+    """Raised when the encrypted credential store cannot be read safely."""
 
 
 def create_key(path: Path) -> bytes:
@@ -61,18 +66,37 @@ def decrypt(key: bytes, nonce: bytes, ciphertext: bytes, *, purpose: str) -> str
 
 def load_database_secret(db_path: Path, key_path: Path, name: str) -> str | None:
     """Read one encrypted secret without exposing it through configuration files."""
-    if not db_path.exists():
-        return None
-    key = load_key(key_path)
-    conn = sqlite3.connect(db_path)
     try:
-        row = conn.execute(
-            "SELECT nonce, ciphertext FROM secrets WHERE name = ?", (name,)
-        ).fetchone()
-    except sqlite3.OperationalError:
+        db_info = db_path.lstat()
+    except FileNotFoundError:
         return None
-    finally:
-        conn.close()
+    except OSError:
+        raise CredentialStoreError("Credential store is unavailable") from None
+    if not stat.S_ISREG(db_info.st_mode):
+        raise CredentialStoreError("Credential store is unavailable")
+    key = load_key(key_path)
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            has_secrets_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'secrets'"
+            ).fetchone()
+            if has_secrets_table:
+                row = conn.execute(
+                    "SELECT nonce, ciphertext FROM secrets WHERE name = ?", (name,)
+                ).fetchone()
+            else:
+                has_application_tables = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name NOT LIKE 'sqlite_%' LIMIT 1"
+                ).fetchone()
+                if has_application_tables:
+                    raise CredentialStoreError("Credential store is unavailable")
+                row = None
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError):
+        raise CredentialStoreError("Credential store is unavailable") from None
     if not row:
         return None
     return decrypt(key, row[0], row[1], purpose=f"secret:{name}")

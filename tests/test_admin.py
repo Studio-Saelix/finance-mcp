@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from click.testing import CliRunner
 from plaid.exceptions import ApiException
@@ -52,6 +54,39 @@ def test_init_is_idempotent_and_hides_credentials(monkeypatch, tmp_path):
     assert "Plaid secret" not in second.output
     db = tmp_path / "data" / "studio-saelix-finance" / "finance.db"
     assert b"secret-fake" not in db.read_bytes()
+
+
+def test_init_bootstraps_a_new_installation(monkeypatch, tmp_path):
+    _isolated(monkeypatch, tmp_path)
+    result = CliRunner().invoke(main, ["init"], input="client-fake\nsandbox-secret\n")
+    assert result.exit_code == 0, result.output
+    assert "Initialized Sandbox state" in result.output
+    assert (tmp_path / "data" / "studio-saelix-finance" / "finance.db").is_file()
+
+
+def test_status_reports_sqlite_failure_without_not_initialized_or_traceback(
+    monkeypatch, tmp_path
+):
+    _isolated(monkeypatch, tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(main, ["init"], input="client\nsecret\n").exit_code == 0
+
+    def fail_open(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr("plaid_mcp.crypto.sqlite3.connect", fail_open)
+    result = runner.invoke(main, ["status"])
+    assert result.exit_code == 0
+    assert "Credential store is unavailable" in result.output
+    assert "not initialized" not in result.output.lower()
+    assert "disk I/O error" not in result.output
+    assert "Traceback" not in result.output
+
+    initialized = runner.invoke(main, ["init"])
+    assert initialized.exit_code != 0
+    assert "Credential store is unavailable" in initialized.output
+    assert "disk I/O error" not in initialized.output
+    assert "Traceback" not in initialized.output
 
 
 def test_init_recovers_missing_secret_and_status_is_redacted(monkeypatch, tmp_path):

@@ -6,7 +6,12 @@ import sqlite3
 
 import pytest
 
-from plaid_mcp.crypto import CredentialError, create_key
+from plaid_mcp.crypto import (
+    CredentialError,
+    CredentialStoreError,
+    create_key,
+    load_database_secret,
+)
 
 
 def test_access_token_and_secrets_are_encrypted(tmp_db):
@@ -35,3 +40,39 @@ def test_wrong_key_fails_closed(tmp_db, tmp_path):
             other.get_runtime_token("item_1")
     finally:
         other.close()
+
+
+def test_load_secret_from_uninitialized_database_returns_none(tmp_path):
+    db_path = tmp_path / "bootstrap.db"
+    sqlite3.connect(db_path).close()
+    key_path = tmp_path / "bootstrap-master.key"
+    create_key(key_path)
+
+    assert load_database_secret(db_path, key_path, "plaid_client_id") is None
+
+
+def test_missing_secrets_table_in_existing_app_database_fails_closed(tmp_path):
+    db_path = tmp_path / "partial.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE items (item_id TEXT PRIMARY KEY)")
+    conn.close()
+    key_path = tmp_path / "partial-master.key"
+    create_key(key_path)
+
+    with pytest.raises(CredentialStoreError, match="Credential store is unavailable"):
+        load_database_secret(db_path, key_path, "plaid_client_id")
+
+
+def test_sqlite_operational_error_is_a_sanitized_store_failure(monkeypatch, tmp_path):
+    db_path = tmp_path / "existing.db"
+    db_path.touch()
+    key_path = tmp_path / "diagnostic-master.key"
+    create_key(key_path)
+
+    def fail_open(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr("plaid_mcp.crypto.sqlite3.connect", fail_open)
+    with pytest.raises(CredentialStoreError, match="Credential store is unavailable") as err:
+        load_database_secret(db_path, key_path, "plaid_client_id")
+    assert "disk I/O error" not in str(err.value)

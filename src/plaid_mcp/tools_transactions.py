@@ -98,6 +98,7 @@ def get_balances(storage: Storage, account_id: str | None = None) -> list[dict[s
                     "iso_currency": balances.get("iso_currency_code"),
                 }
             )
+        storage.set_item_error(item["item_id"], None)
     return out
 
 
@@ -222,6 +223,8 @@ def sync_transactions(
         }
         if fetch_error:
             entry["error"] = fetch_error
+        elif status is None or status == _READY_STATUS:
+            storage.set_item_error(item_id, None)
         results.append(entry)
 
     return {"items": results}
@@ -265,6 +268,7 @@ def refresh_transactions(
             client.transactions_refresh(
                 TransactionsRefreshRequest(access_token=access_token)
             )
+            storage.set_item_error(item["item_id"], None)
             results.append(
                 {
                     "item_id": item["item_id"],

@@ -145,7 +145,7 @@ class Config:
             webhook_url=(os.getenv("PLAID_WEBHOOK_URL") if test_overrides else None) or None,
             provider=provider,
         )
-        from .crypto import CredentialError, load_database_secret
+        from .crypto import CredentialError, CredentialStoreError, load_database_secret
 
         try:
             cfg.client_id = (
@@ -158,6 +158,8 @@ class Config:
                     )
                     or ""
                 )
+        except CredentialStoreError:
+            raise
         except CredentialError:
             if require_credentials:
                 raise

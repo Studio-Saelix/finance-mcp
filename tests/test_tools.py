@@ -52,6 +52,7 @@ def test_list_accounts_reads_from_cache(linked_item):
 
 
 def test_get_balances_flattens_plaid_response(linked_item, mock_plaid_client):
+    linked_item.set_item_error("item_1", "previous Plaid read failed")
     mock_plaid_client.accounts_balance_get.return_value = {
         "accounts": [
             {
@@ -78,6 +79,7 @@ def test_get_balances_flattens_plaid_response(linked_item, mock_plaid_client):
     assert balances[0]["available"] == 1200.00
     assert balances[0]["iso_currency"] == "USD"
     assert balances[0]["institution_name"] == "Test Bank"
+    assert linked_item.list_items()[0]["last_error"] is None
 
 
 def test_get_balances_filters_by_account_id(linked_item, mock_plaid_client):
@@ -159,6 +161,28 @@ def test_sync_transactions_records_error(linked_item, mock_plaid_client):
     result = tt.sync_transactions(linked_item)
     assert "error" in result["items"][0]
     assert result["items"][0]["error"] == "Plaid read failed: RuntimeError"
+    assert linked_item.list_items()[0]["last_error"] == "Plaid read failed: RuntimeError"
+
+
+def test_complete_sync_clears_previous_item_error(linked_item, mock_plaid_client):
+    linked_item.set_item_error("item_1", "stale provider error")
+    mock_plaid_client.transactions_sync.side_effect = RuntimeError("temporary failure")
+    failed = tt.sync_transactions(linked_item)
+    assert "error" in failed["items"][0]
+    assert linked_item.list_items()[0]["last_error"] == "Plaid read failed: RuntimeError"
+
+    mock_plaid_client.transactions_sync.side_effect = None
+    mock_plaid_client.transactions_sync.return_value = {
+        "added": [],
+        "modified": [],
+        "removed": [],
+        "next_cursor": "complete-cursor",
+        "has_more": False,
+        "transactions_update_status": "HISTORICAL_UPDATE_COMPLETE",
+    }
+    succeeded = tt.sync_transactions(linked_item)
+    assert "error" not in succeeded["items"][0]
+    assert linked_item.list_items()[0]["last_error"] is None
 
 
 def test_spending_summary_sums_by_category(linked_item, mock_plaid_client):
@@ -184,11 +208,14 @@ def test_spending_summary_sums_by_category(linked_item, mock_plaid_client):
 
 def test_refresh_transactions_hits_plaid_for_each_item(linked_item, mock_plaid_client):
     linked_item.save_item("item_2", "access_tok_2", "ins_2", "Other Bank", ["transactions"])
+    linked_item.set_item_error("item_1", "previous error")
+    linked_item.set_item_error("item_2", "previous error")
     mock_plaid_client.transactions_refresh.return_value = {}
     result = tt.refresh_transactions(linked_item)
     assert mock_plaid_client.transactions_refresh.call_count == 2
     assert {i["item_id"] for i in result["items"]} == {"item_1", "item_2"}
     assert all(i["status"] == "refresh_requested" for i in result["items"])
+    assert all(item["last_error"] is None for item in linked_item.list_items())
 
 
 def test_refresh_transactions_filters_by_item_id(linked_item, mock_plaid_client):
@@ -211,6 +238,7 @@ def test_refresh_transactions_surfaces_per_item_errors(linked_item, mock_plaid_c
     result = tt.refresh_transactions(linked_item)
     assert "error" in result["items"][0]
     assert result["items"][0]["error"] == "Plaid read failed: RuntimeError"
+    assert linked_item.list_items()[0]["last_error"] == "Plaid read failed: RuntimeError"
 
 
 def test_remove_institution_deletes_locally_even_if_plaid_fails(linked_item, mock_plaid_client):
