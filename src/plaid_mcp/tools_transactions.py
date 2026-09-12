@@ -47,13 +47,13 @@ def remove_institution(
         get_client().item_remove(ItemRemoveRequest(access_token=access_token))
     except Exception as e:  # noqa: BLE001
         if force_local_purge:
-            storage.delete_item(item_id)
+            storage.purge_item_state(item_id)
             return {"status": "locally_purged", "item_id": item_id,
                     "warning": safe_provider_error(e)}
         return {"status": "upstream_failed", "item_id": item_id,
                 "error": safe_provider_error(e), "retryable": True}
 
-    storage.delete_item(item_id)
+    storage.purge_item_state(item_id)
     return {"status": "removed", "item_id": item_id}
 
 

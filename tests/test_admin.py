@@ -19,6 +19,27 @@ def _isolated(monkeypatch, tmp_path):
     monkeypatch.delenv("PLAID_ENV", raising=False)
 
 
+def _seed_item_state(storage, item_id):
+    account_id = f"account-{item_id}"
+    storage.save_item(item_id, f"access-{item_id}", "institution", "Test Bank", ["transactions"])
+    storage.upsert_account(item_id, {"account_id": account_id, "name": "Checking"})
+    storage.set_cursor(item_id, f"cursor-{item_id}")
+    storage.upsert_transaction(
+        item_id,
+        {
+            "transaction_id": f"transaction-{item_id}",
+            "account_id": account_id,
+            "amount": 10,
+            "date": "2026-04-01",
+            "name": "test transaction",
+            "pending": False,
+        },
+    )
+    link_token = f"link-{item_id}"
+    storage.save_link_session(link_token, f"https://example.test/{item_id}")
+    storage.complete_link_session(link_token, f"public-{item_id}", item_id)
+
+
 def test_init_is_idempotent_and_hides_credentials(monkeypatch, tmp_path):
     _isolated(monkeypatch, tmp_path)
     runner = CliRunner()
@@ -184,7 +205,7 @@ def test_production_transition_requires_empty_sandbox_and_new_secret(monkeypatch
     blocked = runner.invoke(main, ["use-production"], input="ENABLE PRODUCTION\n")
     assert blocked.exit_code != 0 and "Unlink all Sandbox" in blocked.output
     store = Storage(db, key, create_key=False)
-    store.delete_item("sandbox-item")
+    store.purge_item_state("sandbox-item")
     store.close()
     changed = runner.invoke(
         main, ["use-production"], input="ENABLE PRODUCTION\nproduction-secret\n"
@@ -296,14 +317,59 @@ def test_unlink_confirmation_and_failure_preserve_state(monkeypatch, tmp_path, m
     from plaid_mcp.paths import db_path, key_path
 
     store = Storage(db_path(), key_path(), create_key=False)
-    store.save_item("item-1", "access-token", "ins", "Bank", [])
+    _seed_item_state(store, "item-1")
     store.close()
     mock_plaid_client.item_remove.side_effect = RuntimeError("provider detail")
     result = runner.invoke(main, ["unlink", "item-1"], input="y\n")
     assert result.exit_code != 0 and "preserved" in result.output
     store = Storage(db_path(), key_path(), create_key=False)
-    assert store.get_runtime_token("item-1") == "access-token"
+    try:
+        assert store.get_runtime_token("item-1") == "access-item-1"
+        assert store.get_cursor("item-1") == "cursor-item-1"
+        assert [row["account_id"] for row in store.list_accounts()] == ["account-item-1"]
+        assert [
+            row["transaction_id"] for row in store.query_transactions("2026-01-01", "2026-12-31")
+        ] == ["transaction-item-1"]
+        session = store.get_link_session("link-item-1")
+        assert session["status"] == "completed"
+        assert session["item_id"] == "item-1"
+    finally:
+        store.close()
+
+
+def test_successful_unlink_purges_only_that_items_local_state(
+    monkeypatch, tmp_path, mock_plaid_client
+):
+    _isolated(monkeypatch, tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(main, ["init"], input="client\nsecret\n").exit_code == 0
+    from plaid_mcp.paths import db_path, key_path
+
+    store = Storage(db_path(), key_path(), create_key=False)
+    _seed_item_state(store, "item-1")
+    _seed_item_state(store, "item-2")
     store.close()
+
+    result = runner.invoke(main, ["unlink", "item-1"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "Unlink this institution upstream" in result.output
+    assert "removed" in result.output
+    mock_plaid_client.item_remove.assert_called_once()
+
+    store = Storage(db_path(), key_path(), create_key=False)
+    try:
+        assert store.get_runtime_token("item-1") is None
+        assert store.get_cursor("item-1") is None
+        assert store.get_link_session("link-item-1") is None
+        assert store.get_runtime_token("item-2") == "access-item-2"
+        assert store.get_cursor("item-2") == "cursor-item-2"
+        assert store.get_link_session("link-item-2")["item_id"] == "item-2"
+        assert [row["account_id"] for row in store.list_accounts()] == ["account-item-2"]
+        transactions = store.query_transactions("2026-01-01", "2026-12-31")
+        assert [row["transaction_id"] for row in transactions] == ["transaction-item-2"]
+        assert store.count_accounts("item-1") == 0
+    finally:
+        store.close()
 
 
 def test_force_local_purge_requires_explicit_phrase(monkeypatch, tmp_path, mock_plaid_client):
@@ -313,7 +379,7 @@ def test_force_local_purge_requires_explicit_phrase(monkeypatch, tmp_path, mock_
     from plaid_mcp.paths import db_path, key_path
 
     store = Storage(db_path(), key_path(), create_key=False)
-    store.save_item("item-1", "access-token", "ins", "Bank", [])
+    _seed_item_state(store, "item-1")
     store.close()
     mock_plaid_client.item_remove.side_effect = RuntimeError("provider detail")
     result = runner.invoke(
@@ -321,5 +387,12 @@ def test_force_local_purge_requires_explicit_phrase(monkeypatch, tmp_path, mock_
     )
     assert result.exit_code == 0
     store = Storage(db_path(), key_path(), create_key=False)
-    assert store.list_items() == []
-    store.close()
+    try:
+        assert store.list_items() == []
+        assert store.get_runtime_token("item-1") is None
+        assert store.get_cursor("item-1") is None
+        assert store.list_accounts() == []
+        assert store.query_transactions("2026-01-01", "2026-12-31") == []
+        assert store.get_link_session("link-item-1") is None
+    finally:
+        store.close()

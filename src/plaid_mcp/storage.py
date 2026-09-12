@@ -224,8 +224,20 @@ class Storage:
             out.append(d)
         return out
 
-    def delete_item(self, item_id: str) -> None:
-        self._conn.execute("DELETE FROM items WHERE item_id = ?", (item_id,))
+    def purge_item_state(self, item_id: str) -> None:
+        """Atomically delete an Item and every local record derived from it."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute("DELETE FROM transactions WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM link_sessions WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM sync_cursors WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM accounts WHERE item_id = ?", (item_id,))
+                self._conn.execute("DELETE FROM items WHERE item_id = ?", (item_id,))
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
 
     def set_item_error(self, item_id: str, error: str | None) -> None:
         self._conn.execute(
@@ -413,7 +425,7 @@ class Storage:
         token_hash = hashlib.sha256(link_token.encode()).hexdigest()
         self._conn.execute(
             """UPDATE link_sessions
-               SET status = 'completed', item_id = ?
+               SET status = 'completed', item_id = ?, hosted_url = NULL
                WHERE link_token_hash = ?""",
             (item_id, token_hash),
         )
